@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8" />
+  <!-- viewport-fit=cover обязателен, иначе env(safe-area-inset-*) всегда 0 (вырез/жесты на iPhone и Android) -->
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <meta name="theme-color" content="#0b1220" />
+  <meta name="color-scheme" content="dark light" />
+  <meta name="description" content="Погода: прогноз по часам и дням, качество воздуха, УФ, пыльца" />
+
+  <!-- Установка на домашний экран -->
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="icon" type="image/png" sizes="192x192" href="icons/icon-192.png" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Погода" />
+  <meta name="application-name" content="Погода" />
+  <title>Погода</title>
+
+  <link rel="preconnect" href="https://api.open-meteo.com" crossorigin />
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- Небо суток -->
+  <div class="sky" id="sky"></div>
+  <div class="stars" id="stars"></div>
+  <div class="horizon-glow" id="horizon"></div>
+  <div class="celestial sun" id="sun"></div>
+  <div class="celestial moon" id="moon"></div>
+  <div id="cloudFx" aria-hidden="true"></div>
+  <div id="weatherParticles" aria-hidden="true"></div>
+  <div class="ptr-indicator" id="ptrIndicator" role="status" aria-live="polite">Потяните, чтобы обновить</div>
+
+  <!-- Шапка: поиск + геолокация + настройки -->
+  <header class="header" id="header">
+    <div class="search-box">
+      <svg fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z"/>
+      </svg>
+      <input type="search" id="searchInput" placeholder="Поиск города..." autocomplete="off"
+             autocapitalize="words" enterkeyhint="search" aria-label="Поиск города" />
+      <div class="suggestions" id="suggestions" role="listbox"></div>
+    </div>
+    <button class="loc-btn" id="locBtn" type="button" aria-label="Моё местоположение">
+      <svg width="22" height="22" fill="none" stroke="currentColor" viewBox="0 0 24 24" aria-hidden="true">
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/>
+        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/>
+      </svg>
+    </button>
+    <button class="settings-btn" id="settingsBtn" type="button" aria-label="Настройки">⚙️</button>
+  </header>
+
+  <main class="container">
+    <div id="content">
+      <div class="loading">
+        <div class="spinner"></div>
+        <span data-ru="Загрузка погоды..." data-en="Loading weather...">Загрузка погоды...</span>
+      </div>
+    </div>
+  </main>
+
+  <!-- Панель настроек -->
+  <div class="settings-panel" id="settingsPanel" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <div class="settings-sheet">
+      <h2 id="settingsTitle" data-ru="Настройки" data-en="Settings">Настройки</h2>
+
+      <div class="settings-row">
+        <span data-ru="Тема" data-en="Theme">Тема</span>
+        <div class="settings-opts">
+          <button class="settings-opt" type="button" data-k="theme" data-v="auto" data-ru="Авто" data-en="Auto">Авто</button>
+          <button class="settings-opt" type="button" data-k="theme" data-v="day" data-ru="День" data-en="Day">День</button>
+          <button class="settings-opt" type="button" data-k="theme" data-v="night" data-ru="Ночь" data-en="Night">Ночь</button>
+        </div>
+      </div>
+      <div class="settings-row">
+        <span data-ru="Температура" data-en="Temperature">Температура</span>
+        <div class="settings-opts">
+          <button class="settings-opt" type="button" data-k="tempUnit" data-v="C">°C</button>
+          <button class="settings-opt" type="button" data-k="tempUnit" data-v="F">°F</button>
+        </div>
+      </div>
+      <div class="settings-row">
+        <span data-ru="Ветер" data-en="Wind">Ветер</span>
+        <div class="settings-opts">
+          <button class="settings-opt" type="button" data-k="windUnit" data-v="kmh" data-ru="км/ч" data-en="km/h">км/ч</button>
+          <button class="settings-opt" type="button" data-k="windUnit" data-v="ms" data-ru="м/с" data-en="m/s">м/с</button>
+        </div>
+      </div>
+      <div class="settings-row">
+        <span data-ru="Давление" data-en="Pressure">Давление</span>
+        <div class="settings-opts">
+          <button class="settings-opt" type="button" data-k="pressUnit" data-v="mm" data-ru="мм рт.ст." data-en="mmHg">мм рт.ст.</button>
+          <button class="settings-opt" type="button" data-k="pressUnit" data-v="hpa" data-ru="гПа" data-en="hPa">гПа</button>
+        </div>
+      </div>
+      <div class="settings-row">
+        <span data-ru="Язык" data-en="Language">Язык</span>
+        <div class="settings-opts">
+          <button class="settings-opt" type="button" data-k="lang" data-v="ru">RU</button>
+          <button class="settings-opt" type="button" data-k="lang" data-v="en">EN</button>
+        </div>
+      </div>
+      <div class="settings-row">
+        <span data-ru="Звук погоды" data-en="Weather sound">Звук погоды</span>
+        <div class="settings-opts">
+          <button class="settings-opt" type="button" data-k="sound" data-v="on" data-ru="Вкл" data-en="On">Вкл</button>
+          <button class="settings-opt" type="button" data-k="sound" data-v="off" data-ru="Выкл" data-en="Off">Выкл</button>
+        </div>
+      </div>
+      <div class="settings-row">
+        <span data-ru="Уведомления о дожде" data-en="Rain alerts">Уведомления о дожде</span>
+        <div class="settings-opts">
+          <button class="settings-opt" type="button" id="notifEnableBtn" data-ru="Разрешить" data-en="Allow">Разрешить</button>
+        </div>
+      </div>
+      <div class="settings-row" id="installRow" hidden>
+        <span data-ru="Приложение" data-en="App">Приложение</span>
+        <div class="settings-opts">
+          <button class="settings-opt" type="button" id="installBtn" data-ru="Установить" data-en="Install">Установить</button>
+        </div>
+      </div>
+      <p class="settings-hint" id="iosHint" hidden
+         data-ru="Чтобы установить на iPhone: нажмите «Поделиться» → «На экран «Домой»»."
+         data-en="To install on iPhone: tap Share → Add to Home Screen."></p>
+
+      <button class="settings-close" id="settingsClose" type="button" data-ru="Готово" data-en="Done">Готово</button>
+    </div>
+  </div>
+
+  <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <noscript>Для работы приложения нужен JavaScript.</noscript>
+  <script src="config.js"></script>
+  <script src="app.js"></script>
+</body>
+</html>

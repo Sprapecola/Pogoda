@@ -1,0 +1,1121 @@
+    :root {
+      --bg: #0f172a;
+      --card: rgba(30, 41, 59, 0.75);
+      --text: #f1f5f9;
+      --muted: #94a3b8;
+      --accent: #38bdf8;
+      --glass: rgba(255, 255, 255, 0.08);
+      --border: rgba(255, 255, 255, 0.12);
+      --safe-top: env(safe-area-inset-top, 0px);
+      --safe-bottom: env(safe-area-inset-bottom, 0px);
+    }
+
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+      -webkit-tap-highlight-color: transparent;
+    }
+
+    html {
+      height: 100%;
+      background: #4fc3f7; /* совпадает с дневным небом — убирает тёмный flash при скролле */
+      overscroll-behavior: none;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', sans-serif;
+      color: var(--text);
+      min-height: 100dvh;
+      overflow-x: hidden;
+      overscroll-behavior-y: none;
+      padding-bottom: calc(32px + var(--safe-bottom));
+      -webkit-font-smoothing: antialiased;
+      position: relative;
+      background: transparent;
+      -webkit-user-select: none;
+      user-select: none;
+      -webkit-touch-callout: none;
+      touch-action: manipulation;
+    }
+    input { -webkit-user-select: text; user-select: text; }
+    button { font-family: inherit; }
+
+    /* ===== Небо суток ===== */
+    .sky {
+      position: fixed;
+      top: -20%;
+      left: 0;
+      right: 0;
+      bottom: -20%;
+      z-index: 0;
+      pointer-events: none;
+      transition: background 2s ease;
+      background: linear-gradient(180deg, #0288d1 0%, #29b6f6 40%, #81d4fa 80%, #e1f5fe 100%);
+    }
+
+    .celestial {
+      position: fixed;
+      z-index: 0;
+      pointer-events: none;
+      border-radius: 50%;
+      transition: top 1.4s cubic-bezier(0.4,0,0.2,1), left 1.4s cubic-bezier(0.4,0,0.2,1), opacity 1.4s ease, box-shadow 1.4s ease;
+      will-change: top, left, opacity;
+    }
+
+    /* Солнце с мягким свечением (4K-качество) */
+    .sun {
+      width: 110px;
+      height: 110px;
+      background:
+        radial-gradient(circle at 40% 35%, #ffffff 0%, #fff59d 25%, #ffd54f 50%, #ffb300 75%, #ff8f00 100%);
+      box-shadow:
+        0 0 40px 15px rgba(255, 236, 150, 0.7),
+        0 0 80px 30px rgba(255, 180, 50, 0.45),
+        0 0 140px 50px rgba(255, 140, 0, 0.2);
+      animation: sunPulse 6s ease-in-out infinite;
+    }
+
+    .sun::after {
+      content: "";
+      position: absolute;
+      inset: -30%;
+      border-radius: 50%;
+      background: radial-gradient(circle, rgba(255,220,100,0.25) 0%, transparent 70%);
+      animation: sunRay 8s linear infinite;
+    }
+
+    @keyframes sunPulse {
+      0%, 100% { transform: translate(-50%, -50%) scale(1); }
+      50%      { transform: translate(-50%, -50%) scale(1.06); }
+    }
+    @keyframes sunRay {
+      from { transform: rotate(0deg); }
+      to   { transform: rotate(360deg); }
+    }
+
+    .moon {
+      width: 78px;
+      height: 78px;
+      background:
+        radial-gradient(circle at 35% 35%, #fafafa 0%, #e8eaf0 45%, #c5cae9 100%);
+      box-shadow:
+        0 0 30px 10px rgba(200, 220, 255, 0.35),
+        0 0 60px 20px rgba(150, 180, 255, 0.15);
+      opacity: 0;
+      transform: translate(-50%, -50%);
+    }
+
+    .stars {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 2s ease;
+      background-image:
+        radial-gradient(1.5px 1.5px at 8% 12%, #fff, transparent),
+        radial-gradient(2px 2px at 18% 28%, #fff, transparent),
+        radial-gradient(1px 1px at 32% 8%, #fff, transparent),
+        radial-gradient(1.5px 1.5px at 45% 35%, #fff, transparent),
+        radial-gradient(1px 1px at 58% 18%, #fff, transparent),
+        radial-gradient(2px 2px at 72% 42%, #fff, transparent),
+        radial-gradient(1px 1px at 85% 15%, #fff, transparent),
+        radial-gradient(1.5px 1.5px at 92% 55%, #fff, transparent),
+        radial-gradient(1px 1px at 12% 62%, #fff, transparent),
+        radial-gradient(1.5px 1.5px at 28% 78%, #fff, transparent),
+        radial-gradient(1px 1px at 50% 70%, #fff, transparent),
+        radial-gradient(2px 2px at 68% 88%, #fff, transparent),
+        radial-gradient(1px 1px at 80% 65%, #fff, transparent),
+        radial-gradient(1.5px 1.5px at 95% 80%, #fff, transparent),
+        radial-gradient(1px 1px at 5% 45%, #fff, transparent);
+      background-size: 100% 100%;
+      animation: twinkle 4s ease-in-out infinite alternate;
+    }
+
+    @keyframes twinkle {
+      0%   { opacity: 0.7; }
+      100% { opacity: 1; }
+    }
+
+    .horizon-glow {
+      position: fixed;
+      left: 0;
+      right: 0;
+      bottom: -10%;
+      height: 45%;
+      z-index: 0;
+      pointer-events: none;
+      transition: opacity 2s ease, background 2s ease;
+      opacity: 0;
+    }
+
+    .container {
+      max-width: 480px;
+      margin: 0 auto;
+      padding: 16px;
+      padding-left: max(16px, env(safe-area-inset-left, 0px));
+      padding-right: max(16px, env(safe-area-inset-right, 0px));
+      /* место под fixed-шапку поиска */
+      padding-top: calc(72px + var(--safe-top));
+      position: relative;
+      z-index: 1;
+    }
+
+    /* ===== Дневной / ночной режим текста ===== */
+    body.day-mode {
+      --text: #0f172a;
+      --muted: #334155;
+      --card: rgba(255, 255, 255, 0.55);
+      --glass: rgba(255, 255, 255, 0.4);
+      --border: rgba(15, 23, 42, 0.12);
+    }
+    body.day-mode .city-name,
+    body.day-mode .condition {
+      color: #0f172a;
+      text-shadow: 0 1px 8px rgba(255,255,255,0.5);
+    }
+    body.day-mode .date,
+    body.day-mode .feels {
+      color: #334155;
+      text-shadow: none;
+    }
+    body.day-mode .temp-main {
+      background: linear-gradient(180deg, #0f172a 20%, #475569);
+      -webkit-background-clip: text;
+      background-clip: text;
+      filter: none;
+    }
+    body.day-mode .temp-main span {
+      -webkit-text-fill-color: #64748b;
+    }
+    body.day-mode .section-title {
+      color: #0f172a;
+    }
+    body.day-mode .stat-card,
+    body.day-mode .hour-card,
+    body.day-mode .day-row {
+      background: rgba(255, 255, 255, 0.55);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255,255,255,0.6);
+      color: #0f172a;
+    }
+    body.day-mode .stat-card .label,
+    body.day-mode .hour-card .time {
+      color: #475569;
+    }
+    body.day-mode .interval-tab {
+      background: rgba(255, 255, 255, 0.4);
+      color: #475569;
+      border-color: rgba(15, 23, 42, 0.1);
+    }
+    body.day-mode .interval-tab.active {
+      background: rgba(14, 165, 233, 0.25);
+      color: #0369a1;
+      border-color: rgba(14, 165, 233, 0.4);
+    }
+    body.day-mode .footer {
+      color: #64748b;
+    }
+
+    /* Переключатель интервала часов */
+    .interval-tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .interval-tab {
+      flex: 1;
+      padding: 8px 0;
+      border-radius: 12px;
+      border: 1px solid var(--border);
+      background: var(--glass);
+      color: var(--muted);
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+      text-align: center;
+      transition: all 0.2s ease;
+    }
+    .interval-tab.active {
+      background: rgba(56, 189, 248, 0.2);
+      color: var(--accent);
+      border-color: rgba(56, 189, 248, 0.4);
+    }
+    .interval-tab:active {
+      transform: scale(0.97);
+    }
+
+    /* ===== ANIMATIONS ===== */
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(24px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; }
+      to   { opacity: 1; }
+    }
+    @keyframes scaleIn {
+      from { opacity: 0; transform: scale(0.85); }
+      to   { opacity: 1; transform: scale(1); }
+    }
+    @keyframes float {
+      0%, 100% { transform: translateY(0); }
+      50%      { transform: translateY(-8px); }
+    }
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); }
+      50%      { transform: scale(1.05); }
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+    @keyframes slideInRight {
+      from { opacity: 0; transform: translateX(30px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+    @keyframes tempPop {
+      0%   { opacity: 0; transform: scale(0.6); }
+      70%  { transform: scale(1.08); }
+      100% { opacity: 1; transform: scale(1); }
+    }
+    @keyframes shimmer {
+      0%   { background-position: -200% 0; }
+      100% { background-position: 200% 0; }
+    }
+
+    .anim-fade-up    { animation: fadeUp 0.55s cubic-bezier(0.22, 1, 0.36, 1) both; }
+    .anim-scale      { animation: scaleIn 0.5s cubic-bezier(0.22, 1, 0.36, 1) both; }
+    .anim-float      { animation: float 3.5s ease-in-out infinite; }
+    .anim-temp       { animation: tempPop 0.7s cubic-bezier(0.22, 1, 0.36, 1) both; }
+    .anim-slide      { animation: slideInRight 0.45s cubic-bezier(0.22, 1, 0.36, 1) both; }
+
+    .delay-1 { animation-delay: 0.08s; }
+    .delay-2 { animation-delay: 0.16s; }
+    .delay-3 { animation-delay: 0.24s; }
+    .delay-4 { animation-delay: 0.32s; }
+    .delay-5 { animation-delay: 0.40s; }
+
+    /* Header / Search — fixed, прозрачный, скрывается при скролле вниз */
+    .header {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      position: fixed;
+      top: 0;
+      left: 50%;
+      transform: translateX(-50%);
+      width: 100%;
+      max-width: 480px;
+      z-index: 50;
+      background: rgba(11, 18, 32, 0.25);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      padding: 12px 16px;
+      padding-top: calc(12px + var(--safe-top));
+      border-bottom: 1px solid rgba(255,255,255,0.08);
+      transition: transform 0.3s ease, opacity 0.3s ease;
+      box-sizing: border-box;
+    }
+    .header.header-hidden {
+      transform: translateX(-50%) translateY(-110%);
+      opacity: 0;
+      pointer-events: none;
+    }
+
+    body.day-mode .header {
+      background: rgba(255, 255, 255, 0.35);
+      border-bottom-color: rgba(15, 23, 42, 0.08);
+    }
+
+    .search-box {
+      flex: 1;
+      position: relative;
+    }
+
+    .search-box input {
+      width: 100%;
+      padding: 14px 16px 14px 44px;
+      border-radius: 16px;
+      border: 1px solid rgba(255,255,255,0.2);
+      background: rgba(255, 255, 255, 0.18);
+      color: #fff;
+      font-size: 16px;
+      font-weight: 500;
+      outline: none;
+      transition: all 0.2s;
+      text-shadow: 0 1px 3px rgba(0,0,0,0.35);
+    }
+    .search-box input::placeholder {
+      color: rgba(255,255,255,0.7);
+      text-shadow: none;
+    }
+    .search-box input:focus {
+      border-color: rgba(56, 189, 248, 0.6);
+      background: rgba(255, 255, 255, 0.28);
+    }
+
+    body.day-mode .search-box input {
+      background: rgba(255, 255, 255, 0.55);
+      border-color: rgba(15, 23, 42, 0.12);
+      color: #0f172a;
+      text-shadow: none;
+    }
+    body.day-mode .search-box input::placeholder {
+      color: #64748b;
+    }
+    body.day-mode .search-box input:focus {
+      background: rgba(255, 255, 255, 0.85);
+      border-color: rgba(14, 165, 233, 0.5);
+    }
+
+    .search-box svg {
+      position: absolute;
+      left: 14px;
+      top: 50%;
+      transform: translateY(-50%);
+      width: 20px;
+      height: 20px;
+      opacity: 0.7;
+      stroke: #fff;
+    }
+    body.day-mode .search-box svg {
+      stroke: #475569;
+    }
+
+    .loc-btn {
+      width: 48px;
+      height: 48px;
+      border-radius: 16px;
+      border: 1px solid rgba(255,255,255,0.2);
+      background: rgba(255, 255, 255, 0.18);
+      color: #fff;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      cursor: pointer;
+      transition: all 0.2s;
+    }
+
+    .loc-btn:active {
+      transform: scale(0.95);
+      background: rgba(56, 189, 248, 0.2);
+    }
+    body.day-mode .loc-btn {
+      background: rgba(255, 255, 255, 0.55);
+      border-color: rgba(15, 23, 42, 0.12);
+      color: #0f172a;
+    }
+
+    /* Current Weather */
+    .current {
+      text-align: center;
+      margin-bottom: 28px;
+    }
+
+    .city-name {
+      font-size: 28px;
+      font-weight: 600;
+      margin-bottom: 4px;
+      letter-spacing: -0.3px;
+      text-shadow: 0 2px 12px rgba(0,0,0,0.45);
+    }
+
+    .date {
+      color: var(--muted);
+      font-size: 15px;
+      margin-bottom: 18px;
+      text-shadow: 0 1px 8px rgba(0,0,0,0.4);
+    }
+
+    .weather-icon-big {
+      font-size: 72px;
+      line-height: 1;
+      margin: 8px 0 4px;
+      display: inline-block;
+      filter: drop-shadow(0 8px 20px rgba(56, 189, 248, 0.25));
+    }
+
+    .temp-main {
+      font-size: 86px;
+      font-weight: 200;
+      line-height: 1;
+      letter-spacing: -4px;
+      background: linear-gradient(180deg, #fff 30%, #94a3b8);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      filter: drop-shadow(0 4px 16px rgba(0,0,0,0.35));
+    }
+
+    .temp-main span {
+      font-size: 42px;
+      vertical-align: super;
+      -webkit-text-fill-color: #94a3b8;
+    }
+
+    .condition {
+      font-size: 20px;
+      margin: 10px 0 12px;
+      font-weight: 500;
+      text-shadow: 0 2px 10px rgba(0,0,0,0.4);
+    }
+    .condition::first-letter { text-transform: uppercase; }
+
+    .feels {
+      color: var(--muted);
+      font-size: 15px;
+      text-shadow: 0 1px 8px rgba(0,0,0,0.35);
+    }
+
+    /* Stats grid */
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+
+    .stat-card {
+      background: var(--card);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 16px 10px;
+      text-align: center;
+      transition: transform 0.25s ease, background 0.25s;
+    }
+    .stat-card:active {
+      transform: scale(0.96);
+    }
+
+    .stat-card .label {
+      font-size: 11px;
+      color: var(--muted);
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      letter-spacing: 0.6px;
+    }
+
+    .stat-card .value {
+      font-size: 17px;
+      font-weight: 600;
+    }
+
+    /* ===== Качество воздуха ===== */
+    .aqi-card {
+      background: var(--card);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      padding: 18px 18px 16px;
+      margin-bottom: 14px;
+    }
+    .aqi-card .aqi-label {
+      font-size: 13px;
+      color: var(--muted);
+      margin-bottom: 10px;
+    }
+    .aqi-card .aqi-title {
+      font-size: 24px;
+      font-weight: 700;
+      margin-bottom: 6px;
+    }
+    .aqi-card .aqi-desc {
+      font-size: 13px;
+      color: var(--muted);
+      line-height: 1.4;
+      margin-bottom: 14px;
+    }
+    .aqi-bar {
+      height: 6px;
+      border-radius: 3px;
+      background: linear-gradient(90deg, #22c55e, #84cc16, #eab308, #f97316, #ef4444, #7f1d1d);
+      position: relative;
+    }
+    .aqi-dot {
+      position: absolute;
+      top: 50%;
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      background: #fff;
+      border: 2px solid #0f172a;
+      transform: translate(-50%, -50%);
+      box-shadow: 0 1px 4px rgba(0,0,0,0.3);
+    }
+
+    /* ===== Детали 2×3 ===== */
+    .details-grid {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 10px;
+      margin-bottom: 14px;
+    }
+    .detail-card {
+      background: var(--card);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 14px 10px;
+      text-align: center;
+    }
+    .detail-card .d-icon {
+      font-size: 22px;
+      margin-bottom: 4px;
+    }
+    .detail-card .d-label {
+      font-size: 11px;
+      color: var(--muted);
+      margin-bottom: 6px;
+      line-height: 1.2;
+    }
+    .detail-card .d-value {
+      font-size: 16px;
+      font-weight: 700;
+    }
+    .detail-card .d-sub {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 2px;
+    }
+
+    /* ===== Восход / Закат ===== */
+    .sun-card {
+      background: var(--card);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      padding: 18px;
+      margin-bottom: 28px;
+    }
+    .sun-row {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      margin-bottom: 12px;
+    }
+    .sun-side {
+      text-align: center;
+      flex: 0 0 auto;
+    }
+    .sun-side .s-icon { font-size: 22px; }
+    .sun-side .s-label { font-size: 12px; color: var(--muted); margin-top: 2px; }
+    .sun-side .s-time { font-size: 20px; font-weight: 700; margin-top: 8px; }
+    .sun-track {
+      position: relative;
+      height: 8px;
+      background: rgba(148, 163, 184, 0.35);
+      border-radius: 4px;
+      margin: 8px 0 4px;
+      overflow: visible;
+    }
+    .sun-track-fill {
+      position: absolute;
+      left: 0;
+      top: 0;
+      height: 100%;
+      border-radius: 4px;
+      background: linear-gradient(90deg, #fbbf24, #f59e0b);
+    }
+    .sun-track-icon {
+      position: absolute;
+      top: 50%;
+      transform: translate(-50%, -50%);
+      font-size: 18px;
+      line-height: 1;
+    }
+
+    body.day-mode .aqi-card,
+    body.day-mode .detail-card,
+    body.day-mode .sun-card {
+      background: rgba(255, 255, 255, 0.55);
+      border-color: rgba(255,255,255,0.6);
+      color: #0f172a;
+    }
+    body.day-mode .aqi-card .aqi-label,
+    body.day-mode .aqi-card .aqi-desc,
+    body.day-mode .detail-card .d-label,
+    body.day-mode .detail-card .d-sub,
+    body.day-mode .sun-side .s-label {
+      color: #475569;
+    }
+
+    /* Hourly */
+    .section-title {
+      font-size: 17px;
+      font-weight: 600;
+      margin-bottom: 14px;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .hourly-scroll {
+      display: flex;
+      gap: 10px;
+      overflow-x: auto;
+      padding-bottom: 10px;
+      margin-bottom: 28px;
+      scrollbar-width: none;
+      -webkit-overflow-scrolling: touch;
+    }
+
+    .hourly-scroll::-webkit-scrollbar {
+      display: none;
+    }
+
+    .hour-card {
+      min-width: 70px;
+      background: var(--card);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 14px 8px;
+      text-align: center;
+      flex-shrink: 0;
+      transition: transform 0.2s, background 0.2s;
+    }
+    .hour-card:active {
+      transform: scale(0.95);
+      background: rgba(56, 189, 248, 0.12);
+    }
+
+    .hour-card .time {
+      font-size: 12px;
+      color: var(--muted);
+      margin-bottom: 8px;
+    }
+
+    .hour-card .icon {
+      font-size: 26px;
+      margin-bottom: 6px;
+      display: block;
+    }
+
+    .hour-card .temp {
+      font-size: 15px;
+      font-weight: 600;
+    }
+
+    /* Daily */
+    .daily-list {
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .day-row {
+      display: flex;
+      align-items: center;
+      background: var(--card);
+      backdrop-filter: blur(12px);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 14px 16px;
+      gap: 12px;
+      transition: transform 0.2s, background 0.2s;
+    }
+    .day-row:active {
+      transform: scale(0.98);
+      background: rgba(56, 189, 248, 0.1);
+    }
+
+    .day-row .day-name {
+      width: 72px;
+      font-weight: 500;
+      font-size: 15px;
+    }
+
+    .day-row .icon {
+      font-size: 26px;
+      width: 36px;
+      text-align: center;
+    }
+
+    .day-row .temps {
+      margin-left: auto;
+      display: flex;
+      gap: 14px;
+      font-size: 15px;
+    }
+
+    .day-row .max {
+      font-weight: 600;
+    }
+
+    .day-row .min {
+      color: var(--muted);
+    }
+
+    /* Loading & Error */
+    .loading, .error {
+      text-align: center;
+      padding: 80px 20px;
+      color: var(--muted);
+    }
+
+    .spinner {
+      width: 42px;
+      height: 42px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin 0.75s linear infinite;
+      margin: 0 auto 18px;
+    }
+
+    .loading-text {
+      animation: pulse 1.6s ease-in-out infinite;
+    }
+
+    /* Suggestions — всегда светлый фон + тёмный текст (максимальный контраст) */
+    .suggestions {
+      position: absolute;
+      top: 100%;
+      left: 0;
+      right: 0;
+      background: #ffffff !important;
+      border: 1px solid rgba(15, 23, 42, 0.12);
+      border-radius: 14px;
+      margin-top: 6px;
+      max-height: 280px;
+      overflow-y: auto;
+      z-index: 200;
+      display: none;
+      box-shadow: 0 12px 40px rgba(0,0,0,0.2);
+    }
+
+    .suggestions.show {
+      display: block;
+    }
+
+    .suggestion-item {
+      padding: 14px 16px;
+      cursor: pointer;
+      border-bottom: 1px solid rgba(15, 23, 42, 0.08);
+      font-size: 15px;
+      font-weight: 500;
+      color: #0f172a !important;
+      background: #ffffff !important;
+    }
+
+    .suggestion-item:last-child {
+      border-bottom: none;
+    }
+
+    .suggestion-item:active,
+    .suggestion-item:hover {
+      background: #e0f2fe !important;
+      color: #0369a1 !important;
+    }
+
+    .footer {
+      text-align: center;
+      margin-top: 32px;
+      font-size: 12px;
+      color: var(--muted);
+      opacity: 0.7;
+    }
+
+    /* ===== Новые блоки ===== */
+    .wear-card, .moon-card, .pollen-card, .chart-card, .compare-card, .radar-card, .hist-card {
+      background: var(--card);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--border);
+      border-radius: 22px;
+      padding: 16px 18px;
+      margin-bottom: 14px;
+    }
+    body.day-mode .wear-card, body.day-mode .moon-card, body.day-mode .pollen-card,
+    body.day-mode .chart-card, body.day-mode .compare-card, body.day-mode .radar-card,
+    body.day-mode .hist-card {
+      background: rgba(255,255,255,0.55);
+      border-color: rgba(255,255,255,0.6);
+      color: #0f172a;
+    }
+    .wear-card .wear-title, .moon-card .moon-title, .pollen-card .pollen-title {
+      font-size: 13px; color: var(--muted); margin-bottom: 8px;
+    }
+    .wear-card .wear-text { font-size: 16px; font-weight: 600; line-height: 1.35; }
+    .moon-row { display: flex; align-items: center; gap: 14px; }
+    .moon-emoji { font-size: 40px; line-height: 1; }
+    .moon-name { font-size: 18px; font-weight: 700; }
+    .moon-sub { font-size: 13px; color: var(--muted); margin-top: 2px; }
+    .pollen-level { font-size: 20px; font-weight: 700; margin-bottom: 4px; }
+    .pollen-items { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+    .pollen-chip {
+      font-size: 12px; padding: 5px 10px; border-radius: 20px;
+      background: rgba(56,189,248,0.15); font-weight: 500;
+    }
+    body.day-mode .pollen-chip { background: rgba(14,165,233,0.15); color: #0369a1; }
+
+    .chart-wrap { width: 100%; overflow-x: auto; -webkit-overflow-scrolling: touch; }
+    .chart-wrap svg { display: block; width: 100%; min-width: 280px; height: 140px; }
+
+    .fav-bar {
+      display: flex; gap: 8px; overflow-x: auto; padding: 0 0 10px;
+      margin-bottom: 8px; scrollbar-width: none;
+    }
+    .fav-bar::-webkit-scrollbar { display: none; }
+    .fav-chip {
+      flex-shrink: 0; padding: 8px 14px; border-radius: 20px;
+      background: var(--glass); border: 1px solid var(--border);
+      font-size: 13px; font-weight: 600; cursor: pointer;
+      color: var(--text); white-space: nowrap;
+    }
+    .fav-chip.active { background: rgba(56,189,248,0.25); border-color: rgba(56,189,248,0.5); color: var(--accent); }
+    body.day-mode .fav-chip.active { color: #0369a1; }
+
+    .settings-btn, .fav-add-btn {
+      width: 48px; height: 48px; border-radius: 16px;
+      border: 1px solid rgba(255,255,255,0.2);
+      background: rgba(255,255,255,0.18); color: #fff;
+      display: flex; align-items: center; justify-content: center;
+      cursor: pointer; font-size: 20px; flex-shrink: 0;
+    }
+    body.day-mode .settings-btn, body.day-mode .fav-add-btn {
+      background: rgba(255,255,255,0.55); border-color: rgba(15,23,42,0.12); color: #0f172a;
+    }
+
+    .settings-panel {
+      position: fixed; inset: 0; z-index: 200;
+      background: rgba(0,0,0,0.45); display: none;
+      align-items: flex-end; justify-content: center;
+    }
+    .settings-panel.open { display: flex; }
+    .settings-sheet {
+      width: 100%; max-width: 480px; max-height: 85dvh;
+      background: #1e293b; border-radius: 24px 24px 0 0;
+      padding: 20px 18px calc(24px + var(--safe-bottom));
+      overflow-y: auto; color: #f1f5f9;
+      animation: fadeUp 0.3s ease;
+    }
+    body.day-mode .settings-sheet { background: #f8fafc; color: #0f172a; }
+    .settings-sheet h2 { font-size: 20px; margin-bottom: 16px; }
+    .settings-row {
+      display: flex; justify-content: space-between; align-items: center;
+      padding: 14px 0; border-bottom: 1px solid rgba(148,163,184,0.2);
+      font-size: 15px;
+    }
+    .settings-row:last-child { border-bottom: none; }
+    .settings-opts { display: flex; gap: 6px; flex-wrap: wrap; }
+    .settings-opt {
+      padding: 7px 12px; border-radius: 12px; font-size: 13px; font-weight: 600;
+      border: 1px solid rgba(148,163,184,0.3); background: transparent;
+      color: inherit; cursor: pointer;
+    }
+    .settings-opt.active {
+      background: rgba(56,189,248,0.25); border-color: rgba(56,189,248,0.5); color: #38bdf8;
+    }
+    body.day-mode .settings-opt.active { color: #0369a1; }
+    .settings-close {
+      width: 100%; margin-top: 16px; padding: 14px; border: none; border-radius: 16px;
+      background: #38bdf8; color: #0f172a; font-weight: 700; font-size: 16px; cursor: pointer;
+    }
+
+    /* Осадки в hourly */
+    .hour-card .pop {
+      font-size: 11px; color: #38bdf8; margin-top: 4px; font-weight: 600;
+    }
+    body.day-mode .hour-card .pop { color: #0284c7; }
+
+    /* Частицы погоды */
+    #weatherParticles {
+      position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden;
+    }
+    .particle {
+      position: absolute; top: -10px; opacity: 0.7;
+      animation: fall linear infinite;
+    }
+    .particle.rain {
+      width: 2px; height: 14px; background: rgba(180,210,255,0.7);
+      border-radius: 1px;
+    }
+    .particle.snow {
+      width: 6px; height: 6px; background: #fff; border-radius: 50%;
+      opacity: 0.85;
+    }
+    .particle.fog {
+      width: 80px; height: 20px; background: rgba(200,210,220,0.15);
+      border-radius: 40px; filter: blur(4px);
+    }
+    @keyframes fall {
+      0% { transform: translateY(-20px) translateX(0); opacity: 0; }
+      10% { opacity: 0.7; }
+      100% { transform: translateY(105vh) translateX(20px); opacity: 0.2; }
+    }
+
+    /* Pull to refresh */
+    .ptr-indicator {
+      position: fixed; top: calc(8px + var(--safe-top)); left: 50%;
+      transform: translateX(-50%) translateY(-40px);
+      z-index: 60; font-size: 13px; font-weight: 600;
+      background: rgba(15,23,42,0.75); color: #fff;
+      padding: 8px 16px; border-radius: 20px;
+      opacity: 0; transition: opacity 0.2s, transform 0.2s;
+      pointer-events: none;
+    }
+    .ptr-indicator.show { opacity: 1; transform: translateX(-50%) translateY(0); }
+    body.day-mode .ptr-indicator { background: rgba(255,255,255,0.9); color: #0f172a; }
+
+    .radar-btn {
+      display: block; text-align: center; padding: 12px;
+      border-radius: 14px; background: rgba(56,189,248,0.15);
+      color: var(--accent); font-weight: 600; text-decoration: none; font-size: 14px;
+    }
+    body.day-mode .radar-btn { color: #0369a1; background: rgba(14,165,233,0.15); }
+
+    .notif-banner {
+      background: rgba(56,189,248,0.12); border: 1px solid rgba(56,189,248,0.3);
+      border-radius: 16px; padding: 12px 14px; margin-bottom: 14px;
+      font-size: 13px; display: flex; justify-content: space-between; align-items: center; gap: 10px;
+    }
+    .notif-banner button {
+      flex-shrink: 0; padding: 8px 12px; border-radius: 12px; border: none;
+      background: #38bdf8; color: #0f172a; font-weight: 700; font-size: 12px; cursor: pointer;
+    }
+
+    /* =====================================================
+       ДОБАВЛЕНО: поведение приложения
+       ===================================================== */
+
+    /* Повторный рендер (избранное, единицы, догрузка) не должен заново проигрывать вход */
+    #content.static .anim-fade-up,
+    #content.static .anim-scale,
+    #content.static .anim-slide,
+    #content.static .anim-temp { animation: none; }
+
+    /* Видимый фокус с клавиатуры / для доступности */
+    button:focus-visible, .fav-chip:focus-visible, .interval-tab:focus-visible,
+    .suggestion-item:focus-visible, .radar-btn:focus-visible, input:focus-visible {
+      outline: 2px solid #38bdf8; outline-offset: 2px;
+    }
+
+    /* Названия в шапке: звезда избранного */
+    .fav-star {
+      border: none; background: none; font-size: 22px; cursor: pointer;
+      vertical-align: middle; color: inherit; padding: 4px 6px;
+    }
+
+    .fav-chip { font-family: inherit; }
+
+    /* Плашка офлайн / обновление */
+    .status-pill {
+      display: inline-block; background: rgba(56,189,248,0.35); color: inherit;
+      font-size: 11px; padding: 4px 10px; border-radius: 20px;
+      margin-bottom: 10px; font-weight: 600;
+    }
+    .status-pill.offline { background: rgba(251,146,60,0.45); }
+
+    /* Toast */
+    .toast {
+      position: fixed; left: 50%; bottom: calc(20px + var(--safe-bottom));
+      transform: translate(-50%, 30px); opacity: 0; pointer-events: none;
+      z-index: 300; max-width: min(92vw, 440px);
+      background: rgba(15,23,42,0.92); color: #f1f5f9;
+      padding: 12px 16px; border-radius: 16px; font-size: 14px; font-weight: 500;
+      display: flex; gap: 12px; align-items: center;
+      transition: opacity .25s ease, transform .25s ease;
+      box-shadow: 0 8px 30px rgba(0,0,0,.35);
+    }
+    .toast.show { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
+    .toast button {
+      border: none; background: #38bdf8; color: #0f172a; font-weight: 700;
+      padding: 7px 12px; border-radius: 10px; font-size: 13px; cursor: pointer; flex-shrink: 0;
+    }
+
+    /* Кнопка «Попробовать снова» */
+    .retry-btn {
+      padding: 10px 20px; border-radius: 12px; border: none;
+      background: #38bdf8; color: #0f172a; font-weight: 600; cursor: pointer; font-size: 15px;
+    }
+
+    /* Настройки: строка установки и подсказка */
+    .settings-hint { font-size: 12px; opacity: .7; padding: 10px 0 0; line-height: 1.4; }
+    .settings-row[hidden], .settings-hint[hidden] { display: none; }
+
+    /* Прочее */
+    .sun-track-icon { text-shadow: 0 1px 4px rgba(0,0,0,.25); }
+    .aqi-title small { font-size: 13px; font-weight: 500; opacity: .7; margin-left: 6px; }
+    .suggestion-item.empty { cursor: default; color: #64748b !important; }
+
+    /* Пользователь просит меньше движения — отключаем всё декоративное */
+    @media (prefers-reduced-motion: reduce) {
+      *, *::before, *::after {
+        animation-duration: 0.001ms !important;
+        animation-iteration-count: 1 !important;
+        transition-duration: 0.001ms !important;
+      }
+      #weatherParticles { display: none; }
+    }
+
+    /* type="search" на iOS/Android добавляет свой вид и крестик */
+    .search-box input { -webkit-appearance: none; appearance: none; }
+    .search-box input::-webkit-search-cancel-button,
+    .search-box input::-webkit-search-decoration { -webkit-appearance: none; display: none; }
+    .interval-tab { font-family: inherit; }
+
+    /* Вероятность осадков — отдельная колонка в строке дня (не рвёт название) */
+    .day-row .day-name { white-space: nowrap; }
+    .day-row .day-pop { width: 52px; font-size: 12px; font-weight: 600; color: #38bdf8; text-align: center; white-space: nowrap; }
+    body.day-mode .day-row .day-pop { color: #0284c7; }
+
+
+    /* =====================================================
+       Погодное небо: облака, туман, вспышки, дождь
+       ===================================================== */
+    #cloudFx { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; transition: filter 2s ease; }
+    #cloudFx .fx-dim { position: absolute; inset: 0; }
+
+    .cloud { position: absolute; left: 0; will-change: transform; animation: cloudMove linear infinite; }
+    /* от «целиком за левым краем» до «целиком за правым» — петля без рывка */
+    @keyframes cloudMove {
+      from { transform: translate3d(calc(-1 * var(--w)), 0, 0); }
+      to   { transform: translate3d(100vw, 0, 0); }
+    }
+
+    .fx-haze {
+      position: absolute; inset: 0;
+      background: linear-gradient(180deg, rgba(205,213,222,.55) 0%, rgba(222,228,235,.78) 55%, rgba(236,239,243,.88) 100%);
+    }
+    .fog-band {
+      position: absolute; left: -35vw; width: 170vw; will-change: transform;
+      background: radial-gradient(ellipse 50% 50% at 50% 50%, rgba(240,244,248,.95) 0%, rgba(240,244,248,.55) 50%, rgba(240,244,248,0) 100%);
+      animation: fogSway ease-in-out infinite alternate;
+    }
+    @keyframes fogSway {
+      from { transform: translate3d(-12vw, 0, 0); }
+      to   { transform: translate3d(12vw, 0, 0); }
+    }
+
+    .fx-flash { position: absolute; inset: 0; background: #dfe9ff; opacity: 0; animation: flash linear infinite; }
+    @keyframes flash {
+      0%, 90%, 100% { opacity: 0; }
+      91% { opacity: .38; }
+      92.5% { opacity: .06; }
+      94% { opacity: .5; }
+      96% { opacity: 0; }
+    }
+
+    /* Дождь: косые капли разной глубины */
+    .particle.rain { animation-name: rainFall; top: 0; background: linear-gradient(180deg, rgba(200,222,255,0), rgba(200,222,255,.9)); }
+    @keyframes rainFall {
+      from { transform: translate3d(0, -8vh, 0) rotate(12deg); }
+      to   { transform: translate3d(calc(-0.213 * 112vh), 112vh, 0) rotate(12deg); }
+    }
+
+    @media (prefers-reduced-motion: reduce) {
+      /* без движения: облака просто стоят на своих местах, вспышек нет */
+      .cloud { animation: none !important; transform: translate3d(var(--x), 0, 0); }
+      .fog-band { animation: none !important; transform: none; }
+      .fx-flash { display: none; }
+    }
+
+    .err-details { font-size: 12px; opacity: .7; margin-top: 14px; word-break: break-word; -webkit-user-select: text; user-select: text; }
