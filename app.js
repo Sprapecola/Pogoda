@@ -4,7 +4,7 @@
   // =====================================================================
   //  Конфиг и хранилище
   // =====================================================================
-  const APP_VERSION = "6.7";
+  const APP_VERSION = "6.8";
   const DEFAULT_CITY = { name: "Урюпинск", lat: 50.8047, lon: 42.0138, country: "RU" };
 
   // Ключи настроек/избранного те же, что в старой версии — данные не потеряются
@@ -1446,66 +1446,214 @@
     return { show, hide, setPhase, available: init };
   })();
 
-  // Три «глубины» мягких объёмных CSS-облаков
-  const DEPTH = [
-    { share: 0.30, top: [0, 28],  w: 0.85, op: [0.45, 0.65], blur: 8, speed: 1.8 },
-    { share: 0.42, top: [6, 46],  w: 1.05, op: [0.75, 0.92], blur: 4, speed: 1.05 },
-    { share: 0.28, top: [20, 62], w: 1.25, op: [0.85, 0.98], blur: 2, speed: 0.8 }
-  ];
+  // =====================================================================
+  //  Объёмные «пушистые» облака (Canvas 2D) — как на фото кучевых облаков
+  // =====================================================================
+  const SoftClouds = (function () {
+    let canvas = null, ctx = null, raf = 0, clouds = [], phase = "day", cover = 0.7, dark = 0;
+    let W = 0, H = 0, dpr = 1, t0 = 0, running = false;
+
+    const PAL = {
+      dawn:   { hi: [255, 236, 220], mid: [240, 210, 195], lo: [190, 160, 150] },
+      day:    { hi: [255, 255, 255], mid: [232, 240, 250], lo: [168, 186, 210] },
+      sunset: { hi: [255, 230, 200], mid: [240, 180, 150], lo: [160, 110, 100] },
+      dusk:   { hi: [180, 185, 210], mid: [120, 125, 155], lo: [70, 75, 100] },
+      night:  { hi: [90, 100, 130],  mid: [55, 62, 85],   lo: [28, 32, 48] }
+    };
+
+    function ensure() {
+      if (canvas) return true;
+      canvas = $("cloudGL");
+      if (!canvas) return false;
+      ctx = canvas.getContext("2d", { alpha: true });
+      if (!ctx) return false;
+      canvas.style.display = "block";
+      canvas.classList.add("on");
+      return true;
+    }
+
+    function resize() {
+      if (!canvas) return;
+      dpr = Math.min(window.devicePixelRatio || 1, 2);
+      W = window.innerWidth || 400;
+      H = window.innerHeight || 800;
+      canvas.width = Math.round(W * dpr);
+      canvas.height = Math.round(H * dpr);
+      canvas.style.width = W + "px";
+      canvas.style.height = H + "px";
+      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    }
+
+    // Одно кучевое облако = куча мягких шаров (свет сверху, тень снизу)
+    function makeCloud(cx, cy, scale, speed) {
+      const puffs = [];
+      const baseR = (0.09 + Math.random() * 0.07) * W * scale;
+      const n = 7 + Math.floor(Math.random() * 5);
+      for (let i = 0; i < n; i++) {
+        const ang = (i / n) * Math.PI * 2 + Math.random() * 0.4;
+        const dist = baseR * (0.15 + Math.random() * 0.55);
+        puffs.push({
+          ox: Math.cos(ang) * dist * (0.7 + Math.random() * 0.6),
+          oy: Math.sin(ang) * dist * 0.45 - baseR * 0.15,
+          r: baseR * (0.35 + Math.random() * 0.55),
+          bright: 0.55 + Math.random() * 0.45
+        });
+      }
+      // крупное основание
+      puffs.push({ ox: 0, oy: baseR * 0.15, r: baseR * 1.1, bright: 0.35 });
+      puffs.push({ ox: -baseR * 0.4, oy: baseR * 0.05, r: baseR * 0.7, bright: 0.5 });
+      puffs.push({ ox: baseR * 0.45, oy: baseR * 0.08, r: baseR * 0.75, bright: 0.55 });
+      return { x: cx, y: cy, puffs, speed, scale, wobble: Math.random() * Math.PI * 2 };
+    }
+
+    function rebuild() {
+      clouds = [];
+      const count = cover < 0.25 ? 2 : cover < 0.5 ? 4 : cover < 0.75 ? 7 : 10;
+      for (let i = 0; i < count; i++) {
+        const scale = 0.85 + Math.random() * 1.1;
+        const cx = (i / count) * W * 1.3 - W * 0.15 + Math.random() * W * 0.2;
+        const cy = H * (0.08 + Math.random() * 0.42);
+        const speed = (0.008 + Math.random() * 0.018) * (0.7 + scale * 0.3);
+        clouds.push(makeCloud(cx, cy, scale, speed));
+      }
+    }
+
+    function puff(px, py, r, col, a) {
+      // плотное ядро + мягкий край — «вата» как на фото
+      const g = ctx.createRadialGradient(px, py - r * 0.2, 0, px, py + r * 0.05, r);
+      g.addColorStop(0, `rgba(${col[0]},${col[1]},${col[2]},${a})`);
+      g.addColorStop(0.35, `rgba(${col[0]},${col[1]},${col[2]},${(a * 0.92).toFixed(3)})`);
+      g.addColorStop(0.7, `rgba(${col[0]},${col[1]},${col[2]},${(a * 0.4).toFixed(3)})`);
+      g.addColorStop(1, `rgba(${col[0]},${col[1]},${col[2]},0)`);
+      ctx.fillStyle = g;
+      ctx.beginPath();
+      ctx.arc(px, py, r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+
+    function drawCloud(c, t) {
+      const pal = PAL[phase] || PAL.day;
+      const x = ((c.x + t * c.speed * W) % (W * 1.5 + 200)) - 100;
+      const y = c.y + Math.sin(t * 0.15 + c.wobble) * 6;
+      // нижняя серо-голубая тень (объём)
+      c.puffs.forEach(p => {
+        const pr = p.r;
+        const px = x + p.ox, py = y + p.oy + pr * 0.1;
+        const lo = [
+          Math.round(pal.lo[0] * (1 - dark * 0.25)),
+          Math.round(pal.lo[1] * (1 - dark * 0.25)),
+          Math.round(pal.lo[2] * (1 - dark * 0.25))
+        ];
+        puff(px, py + pr * 0.15, pr * 1.12, lo, 0.5 + (1 - p.bright) * 0.35);
+      });
+      // средние тона
+      c.puffs.forEach(p => {
+        const pr = p.r * 0.95;
+        const px = x + p.ox, py = y + p.oy;
+        const mid = [
+          Math.round(pal.mid[0] * (1 - dark * 0.3)),
+          Math.round(pal.mid[1] * (1 - dark * 0.3)),
+          Math.round(pal.mid[2] * (1 - dark * 0.3))
+        ];
+        puff(px, py, pr, mid, 0.7 + p.bright * 0.2);
+      });
+      // яркие белые «шапки»
+      c.puffs.forEach(p => {
+        const pr = p.r * 0.72;
+        const px = x + p.ox * 0.9, py = y + p.oy - p.r * 0.12;
+        const hi = [
+          Math.round(pal.hi[0] * (1 - dark * 0.35)),
+          Math.round(pal.hi[1] * (1 - dark * 0.35)),
+          Math.round(pal.hi[2] * (1 - dark * 0.35))
+        ];
+        puff(px, py, pr, hi, 0.75 + p.bright * 0.25);
+      });
+    }
+
+    function frame(now) {
+      raf = 0;
+      if (!running || !ctx) return;
+      if (!t0) t0 = now;
+      const t = (now - t0) / 1000;
+      ctx.clearRect(0, 0, W, H);
+      // лёгкая дымка у горизонта
+      if (cover > 0.4) {
+        const hg = ctx.createLinearGradient(0, H * 0.35, 0, H);
+        const a0 = 0.08 * cover, a1 = 0.22 * cover;
+        hg.addColorStop(0, `rgba(255,255,255,${a0})`);
+        hg.addColorStop(1, `rgba(220,230,240,${a1})`);
+        ctx.fillStyle = hg;
+        ctx.fillRect(0, H * 0.35, W, H * 0.65);
+      }
+      clouds.forEach(c => drawCloud(c, reduceMotion ? 20 : t));
+      if (!reduceMotion && !document.hidden) raf = requestAnimationFrame(frame);
+    }
+
+    function show(cov, drk) {
+      if (!ensure()) return false;
+      cover = cov; dark = drk;
+      resize();
+      rebuild();
+      running = true;
+      canvas.classList.add("on");
+      canvas.style.display = "block";
+      if (raf) cancelAnimationFrame(raf);
+      t0 = 0;
+      raf = requestAnimationFrame(frame);
+      return true;
+    }
+    function hide() {
+      running = false;
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
+      if (canvas) { canvas.classList.remove("on"); ctx && ctx.clearRect(0, 0, W, H); }
+    }
+    function setPhase(name) {
+      phase = name || "day";
+      if (running && !raf) raf = requestAnimationFrame(frame);
+    }
+    window.addEventListener("resize", () => {
+      if (!running) return;
+      resize(); rebuild();
+    });
+    document.addEventListener("visibilitychange", () => {
+      if (!document.hidden && running && !raf) raf = requestAnimationFrame(frame);
+    });
+    return { show, hide, setPhase };
+  })();
 
   function buildFx(code) {
     const box = $("cloudFx"); if (!box) return;
     box.innerHTML = "";
     const kind = kindOf(code);
-    let n = 0, tone = "white", dim = 0, fog = false, flash = false, vig = 0, wMin = 70, wMax = 110, gp = null;
+    let cover = 0, dark = 0, fog = false, flash = false, vig = 0, dim = 0;
     if (kind === "clouds") {
-      if (code === 3) { n = 11; tone = "grey"; dim = 0.4; vig = 0.6; wMin = 110; wMax = 150; gp = [0.9, 0.2]; }
-      else { n = 5; wMin = 60; wMax = 95; gp = [0.6, 0]; }
+      if (code === 3) { cover = 0.92; dark = 0.22; dim = 0.18; vig = 0.45; }
+      else if (code === 2) { cover = 0.55; dark = 0.05; }
+      else { cover = 0.7; dark = 0.12; }
     }
-    else if (kind === "clear" && code === 1) { n = 2; wMin = 55; wMax = 80; gp = [0.2, 0]; }
-    else if (kind === "rain") { n = 11; tone = "dark"; dim = 0.42; vig = 0.9; wMin = 100; wMax = 140; gp = [1, 0.5]; }
-    else if (kind === "storm") { n = 12; tone = "dark"; dim = 0.52; vig = 1; flash = true; wMin = 100; wMax = 145; gp = [1, 0.85]; }
-    else if (kind === "snow") { n = 8; tone = "grey"; dim = 0.28; vig = 0.5; wMin = 90; wMax = 125; gp = [0.9, 0.2]; }
-    else if (kind === "fog") { fog = true; dim = 0.2; }
+    else if (kind === "clear" && code === 1) { cover = 0.22; }
+    else if (kind === "rain") { cover = 0.95; dark = 0.4; dim = 0.28; vig = 0.7; }
+    else if (kind === "storm") { cover = 1; dark = 0.55; dim = 0.4; vig = 0.9; flash = true; }
+    else if (kind === "snow") { cover = 0.85; dark = 0.2; dim = 0.15; vig = 0.4; }
+    else if (kind === "fog") { fog = true; dim = 0.15; cover = 0.3; }
 
-    // WebGL на части телефонов даёт «квадратные» пиксели — только мягкие CSS-облака
     GLFX.hide();
-    const useGL = false;
-    if (useGL) { n = 0; dim = 0; }
+    if (cover > 0.05) SoftClouds.show(cover, dark);
+    else SoftClouds.hide();
 
     const frag = document.createDocumentFragment();
     const add = (cls, css) => { const el = document.createElement("div"); el.className = cls; el.style.cssText = css; frag.appendChild(el); return el; };
-
-    if (dim) add("fx-dim", `background:rgba(92,106,128,${dim})`);
-
-    const windy = kind === "storm" || kind === "rain" ? 0.65 : 1; // в непогоду ветер сильнее
-    DEPTH.forEach(L => {
-      const cnt = n ? Math.max(1, Math.round(n * L.share)) : 0;
-      for (let j = 0; j < cnt; j++) {
-        const w = rnd(wMin, wMax) * L.w;
-        const dur = rnd(110, 240) * L.speed * windy;
-        const delay = -(dur * (j / cnt) + rnd(0, dur / cnt));
-        const top = L.top[0] + (j / cnt) * (L.top[1] - L.top[0]) + rnd(-3, 3);
-        add("cloud",
-          `--w:${w.toFixed(0)}vw;--x:${rnd(-40, 60).toFixed(0)}vw;top:${top.toFixed(1)}%;width:${w.toFixed(0)}vw;height:${(w * 0.46).toFixed(0)}vw;` +
-          `opacity:${rnd(L.op[0], L.op[1]).toFixed(2)};background:${cloudBackground(tone)};` +
-          (L.blur ? `filter:blur(${L.blur}px);` : "") +
-          `animation-duration:${dur.toFixed(0)}s;animation-delay:${delay.toFixed(0)}s`);
-      }
-    });
-
+    if (dim) add("fx-dim", `background:rgba(70,85,110,${dim})`);
     if (vig) add("fx-vignette", `opacity:${vig}`);
-
     if (fog) {
       add("fx-haze", "");
-      for (let i = 0; i < 6; i++) {
+      for (let i = 0; i < 5; i++) {
         add("fog-band",
-          `top:${(4 + i * 15 + rnd(-3, 3)).toFixed(0)}%;height:${rnd(24, 38).toFixed(0)}vh;opacity:${rnd(0.55, 0.9).toFixed(2)};` +
-          `animation-duration:${rnd(34, 70).toFixed(0)}s;animation-delay:${(-rnd(0, 60)).toFixed(0)}s;` +
-          `animation-direction:${i % 2 ? "alternate" : "alternate-reverse"}`);
+          `top:${(6 + i * 16).toFixed(0)}%;height:${rnd(22, 36).toFixed(0)}vh;opacity:${rnd(0.5, 0.85).toFixed(2)};` +
+          `animation-duration:${rnd(40, 75).toFixed(0)}s;animation-delay:${(-rnd(0, 50)).toFixed(0)}s`);
       }
     }
-    if (flash) add("fx-flash", `animation-duration:${rnd(6, 11).toFixed(1)}s;animation-delay:${(-rnd(0, 6)).toFixed(1)}s`);
+    if (flash) add("fx-flash", `animation-duration:${rnd(6, 11).toFixed(1)}s`);
     box.appendChild(frag);
   }
 
@@ -1514,9 +1662,10 @@
     const box = $("cloudFx"); if (!box) return;
     const code = state.data ? state.data.current.code : null;
     GLFX.setPhase(phase);
+    SoftClouds.setPhase(phase);
     if (code !== state.fxCode) {
       state.fxCode = code;
-      if (code == null) { box.innerHTML = ""; GLFX.hide(); } else buildFx(code);
+      if (code == null) { box.innerHTML = ""; GLFX.hide(); SoftClouds.hide(); } else buildFx(code);
     }
     box.style.filter = "brightness(" + (FX_BRIGHT[phase] || 1) + ")";
   }

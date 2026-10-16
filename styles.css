@@ -1167,7 +1167,12 @@
     .diag-out { white-space: pre-line; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; opacity: .9;
       -webkit-user-select: text; user-select: text; line-height: 1.6; }
 
-    #cloudGL { display: none !important; } /* WebGL отключён — только мягкие CSS-облака */
+    #cloudGL {
+      position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none;
+      opacity: 0; transition: opacity 1.1s ease; display: block;
+      image-rendering: auto; image-rendering: smooth;
+    }
+    #cloudGL.on { opacity: 1; }
 
     /* =====================================================
        Воздух: круговая шкала и показатели
