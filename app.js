@@ -4,7 +4,7 @@
   // =====================================================================
   //  Конфиг и хранилище
   // =====================================================================
-  const APP_VERSION = "6.8";
+  const APP_VERSION = "6.10";
   const DEFAULT_CITY = { name: "Урюпинск", lat: 50.8047, lon: 42.0138, country: "RU" };
 
   // Ключи настроек/избранного те же, что в старой версии — данные не потеряются
@@ -784,16 +784,22 @@
   }
 
   function dayRows(data) {
-    return data.daily.slice(0, state.dayRange).map((d, i) => {
-      const dd = new Date(d.date + "T12:00:00Z");
+    const list = (data && Array.isArray(data.daily)) ? data.daily : [];
+    if (!list.length) {
+      return `<div class="day-row" style="justify-content:center;opacity:.75">${t("Нет данных прогноза", "No forecast data")}</div>`;
+    }
+    return list.slice(0, state.dayRange).map((d, i) => {
+      const dd = new Date(String(d.date).slice(0, 10) + "T12:00:00Z");
       const name = i === 0 ? t("Сегодня", "Today") : i === 1 ? t("Завтра", "Tomorrow") : dayName(dd.getUTCDay());
       const dateStr = dd.getUTCDate() + " " + monthName(dd.getUTCMonth());
       const pop = d.pop != null && d.pop >= 10 ? "💧" + Math.round(d.pop) + "%" : "";
+      const maxV = d.max != null && isFinite(d.max) ? toTemp(d.max) + "°" : "—";
+      const minV = d.min != null && isFinite(d.min) ? toTemp(d.min) + "°" : "—";
       return `<div class="day-row anim-fade-up" style="animation-delay:${Math.min(0.1 + i * 0.04, 0.6)}s">
         <div class="day-name">${name}<span style="display:block;font-size:11px;opacity:0.65;font-weight:400">${dateStr}</span></div>
-        <div class="icon">${iconSvg(d.code, true)}</div>
+        <div class="icon">${iconSvg(d.code != null ? d.code : 3, true)}</div>
         <div class="day-pop">${pop}</div>
-        <div class="temps"><span class="max">${toTemp(d.max)}°</span> <span class="min">${toTemp(d.min)}°</span></div></div>`;
+        <div class="temps"><span class="max">${maxV}</span> <span class="min">${minV}</span></div></div>`;
     }).join("");
   }
 
@@ -1508,6 +1514,7 @@
 
     function rebuild() {
       clouds = [];
+      if (W < 10 || H < 10) return;
       const count = cover < 0.25 ? 2 : cover < 0.5 ? 4 : cover < 0.75 ? 7 : 10;
       for (let i = 0; i < count; i++) {
         const scale = 0.85 + Math.random() * 1.1;
@@ -1576,16 +1583,19 @@
       if (!t0) t0 = now;
       const t = (now - t0) / 1000;
       ctx.clearRect(0, 0, W, H);
-      // лёгкая дымка у горизонта
+      // чуть прозрачнее облака — текст сверху читается лучше
+      ctx.save();
+      ctx.globalAlpha = 0.88;
       if (cover > 0.4) {
         const hg = ctx.createLinearGradient(0, H * 0.35, 0, H);
-        const a0 = 0.08 * cover, a1 = 0.22 * cover;
+        const a0 = 0.06 * cover, a1 = 0.16 * cover;
         hg.addColorStop(0, `rgba(255,255,255,${a0})`);
         hg.addColorStop(1, `rgba(220,230,240,${a1})`);
         ctx.fillStyle = hg;
         ctx.fillRect(0, H * 0.35, W, H * 0.65);
       }
       clouds.forEach(c => drawCloud(c, reduceMotion ? 20 : t));
+      ctx.restore();
       if (!reduceMotion && !document.hidden) raf = requestAnimationFrame(frame);
     }
 

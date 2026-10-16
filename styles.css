@@ -164,59 +164,97 @@
 
     /* ===== Дневной / ночной режим текста ===== */
     body.day-mode {
-      --text: #0f172a;
-      --muted: #334155;
-      --card: rgba(255, 255, 255, 0.55);
-      --glass: rgba(255, 255, 255, 0.4);
-      --border: rgba(15, 23, 42, 0.12);
+      --text: #0b1220;
+      --muted: #1e293b;
+      --card: rgba(255, 255, 255, 0.82);
+      --glass: rgba(255, 255, 255, 0.72);
+      --border: rgba(15, 23, 42, 0.14);
     }
+    /* читаемость поверх светлых облаков: тёмный текст + белое «сияние» */
     body.day-mode .city-name,
     body.day-mode .condition {
-      color: #0f172a;
-      text-shadow: 0 1px 8px rgba(255,255,255,0.5);
+      color: #0b1220;
+      text-shadow:
+        0 0 12px rgba(255,255,255,0.95),
+        0 0 24px rgba(255,255,255,0.85),
+        0 1px 2px rgba(255,255,255,1),
+        0 2px 8px rgba(0,0,0,0.12);
     }
     body.day-mode .date,
     body.day-mode .feels {
-      color: #334155;
-      text-shadow: none;
+      color: #1e293b;
+      text-shadow:
+        0 0 10px rgba(255,255,255,0.95),
+        0 1px 3px rgba(255,255,255,1);
     }
     body.day-mode .temp-main {
-      background: linear-gradient(180deg, #0f172a 20%, #475569);
-      -webkit-background-clip: text;
-      background-clip: text;
+      background: none;
+      -webkit-background-clip: unset;
+      background-clip: unset;
+      -webkit-text-fill-color: #0b1220;
+      color: #0b1220;
       filter: none;
+      text-shadow:
+        0 0 16px rgba(255,255,255,1),
+        0 0 28px rgba(255,255,255,0.9),
+        0 2px 4px rgba(255,255,255,1);
     }
     body.day-mode .temp-main span {
-      -webkit-text-fill-color: #64748b;
+      -webkit-text-fill-color: #334155;
+      color: #334155;
+      text-shadow: 0 0 10px rgba(255,255,255,1);
     }
     body.day-mode .section-title {
-      color: #0f172a;
+      color: #0b1220;
+      text-shadow: 0 0 10px rgba(255,255,255,0.9), 0 1px 2px rgba(255,255,255,1);
     }
     body.day-mode .stat-card,
     body.day-mode .hour-card,
     body.day-mode .day-row {
-      background: rgba(255, 255, 255, 0.55);
-      backdrop-filter: blur(16px);
-      -webkit-backdrop-filter: blur(16px);
-      border: 1px solid rgba(255,255,255,0.6);
-      color: #0f172a;
+      background: rgba(255, 255, 255, 0.88);
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      border: 1px solid rgba(255,255,255,0.95);
+      color: #0b1220;
+      box-shadow: 0 4px 20px rgba(15, 23, 42, 0.08);
     }
     body.day-mode .stat-card .label,
     body.day-mode .hour-card .time {
-      color: #475569;
+      color: #334155;
     }
     body.day-mode .interval-tab {
-      background: rgba(255, 255, 255, 0.4);
-      color: #475569;
-      border-color: rgba(15, 23, 42, 0.1);
+      background: rgba(255, 255, 255, 0.75);
+      color: #1e293b;
+      border-color: rgba(15, 23, 42, 0.12);
+      font-weight: 700;
     }
     body.day-mode .interval-tab.active {
-      background: rgba(14, 165, 233, 0.25);
-      color: #0369a1;
-      border-color: rgba(14, 165, 233, 0.4);
+      background: rgba(14, 165, 233, 0.35);
+      color: #0c4a6e;
+      border-color: rgba(14, 165, 233, 0.55);
     }
     body.day-mode .footer {
-      color: #64748b;
+      color: #334155;
+      text-shadow: 0 0 8px rgba(255,255,255,0.9);
+    }
+    body.day-mode .detail-card,
+    body.day-mode .info-card,
+    body.day-mode .aqi-card,
+    body.day-mode .pollen-card,
+    body.day-mode .moon-card,
+    body.day-mode .wear-card,
+    body.day-mode .chart-card {
+      background: rgba(255, 255, 255, 0.88) !important;
+      color: #0b1220;
+      border-color: rgba(255,255,255,0.95);
+    }
+    body.day-mode .detail-card .d-label,
+    body.day-mode .detail-card .d-sub {
+      color: #475569 !important;
+    }
+    body.day-mode .detail-card .d-value {
+      color: #0b1220 !important;
+      font-weight: 700;
     }
 
     /* Переключатель интервала часов */
@@ -325,8 +363,9 @@
     }
 
     body.day-mode .header {
-      background: rgba(255, 255, 255, 0.35);
-      border-bottom-color: rgba(15, 23, 42, 0.08);
+      background: rgba(255, 255, 255, 0.78);
+      border-bottom-color: rgba(15, 23, 42, 0.1);
+      box-shadow: 0 4px 18px rgba(15, 23, 42, 0.06);
     }
 
     .search-box {
