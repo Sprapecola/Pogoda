@@ -1164,3 +1164,48 @@
 
     #cloudGL { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; opacity: 0; transition: opacity 1.2s ease; }
     #cloudGL.on { opacity: 1; }
+
+    /* =====================================================
+       Воздух: круговая шкала и показатели
+       ===================================================== */
+    .aqi-body { display: flex; align-items: center; gap: 14px; }
+    .aqi-gauge { flex: 0 0 158px; max-width: 48%; }
+    .aqi-gauge svg { width: 100%; height: auto; display: block; overflow: visible; }
+    .aqi-gauge .arc { fill: none; stroke-width: 15; stroke-linecap: round; }
+    .aqi-gauge .num { font-size: 42px; font-weight: 700; fill: currentColor; font-family: inherit; }
+    .aqi-gauge .cap { font-size: 11px; fill: currentColor; opacity: .6; letter-spacing: .08em; font-family: inherit; }
+    .aqi-needle { transform-origin: 100px 100px; animation: aqiSweep 1.6s cubic-bezier(.22, 1, .36, 1) both; }
+    @keyframes aqiSweep { from { transform: rotate(0deg); } to { transform: rotate(var(--a)); } }
+    #content.static .aqi-needle { animation: none; }
+    .aqi-side { flex: 1; min-width: 0; }
+    .aqi-side .aqi-title { margin-bottom: 6px; }
+    .aqi-side .aqi-desc { margin-bottom: 0; }
+
+    .aqi-tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(54px, 1fr)); gap: 8px; margin-top: 16px; }
+    .aqi-tile { position: relative; padding: 9px 4px 8px; border-radius: 14px; text-align: center; background: rgba(255,255,255,.07); }
+    .aqi-tile::before { content: ""; position: absolute; top: 7px; right: 7px; width: 7px; height: 7px; border-radius: 50%;
+      background: var(--c); box-shadow: 0 0 8px var(--c); }
+    .aqi-tile .n { font-size: 11px; color: var(--muted); }
+    .aqi-tile .v { font-size: 18px; font-weight: 700; margin-top: 2px; }
+    body.day-mode .aqi-tile { background: rgba(15,23,42,.06); }
+    .aqi-foot { font-size: 11px; color: var(--muted); margin-top: 12px; opacity: .85; }
+    body.day-mode .aqi-foot { color: #475569; }
+
+    /* Пыльца */
+    .pollen-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+    .pollen-stamp { font-size: 11px; color: var(--muted); white-space: nowrap; }
+    .pollen-level .lvl-dot { display: inline-block; width: 10px; height: 10px; border-radius: 50%; margin-right: 9px; vertical-align: 1px; box-shadow: 0 0 10px currentColor; }
+    .pollen-chip { display: inline-flex; align-items: center; gap: 7px; }
+    .pollen-chip::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--c); flex-shrink: 0; }
+    .pollen-chip b { font-weight: 700; }
+    .pollen-note { font-size: 11px; color: var(--muted); margin-top: 12px; opacity: .85; }
+    body.day-mode .pollen-stamp, body.day-mode .pollen-note { color: #475569; }
+
+    .detail-card .d-sub + .d-sub { margin-top: 0; opacity: .8; }
+
+    /* Подвал: ручное обновление */
+    .refresh-link { border: none; background: none; color: inherit; font: inherit; text-decoration: underline; text-underline-offset: 3px; cursor: pointer; padding: 6px 2px; opacity: .9; }
+
+    /* заголовок качества воздуха: днём — тёмный оттенок ступени, чтобы читался на светлом фоне */
+    .aqi-side .aqi-title { color: var(--c); }
+    body.day-mode .aqi-side .aqi-title { color: var(--cd); }

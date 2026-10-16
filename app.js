@@ -4,7 +4,7 @@
   // =====================================================================
   //  Конфиг и хранилище
   // =====================================================================
-  const APP_VERSION = "6.4";
+  const APP_VERSION = "6.5";
   const DEFAULT_CITY = { name: "Урюпинск", lat: 50.8047, lon: 42.0138, country: "RU" };
 
   // Ключи настроек/избранного те же, что в старой версии — данные не потеряются
@@ -516,63 +516,113 @@
   }
 
   // Воздух и пыльца: Open-Meteo, а если не ответил — AQI из OpenWeatherMap
+  // Воздух, УФ и пыльца — один запрос к API качества воздуха Open-Meteo. УФ берём отсюда, потому что
+  // у запасного источника (OpenWeatherMap) его нет. Если сервер не примет расширенные параметры (400) — минимальный запрос.
+  function parseAir(r) {
+    const c = (r && r.current) || {};
+    let air = null;
+    if (c.european_aqi != null) {
+      const e = c.european_aqi;
+      air = {
+        eaqi: Math.round(e),
+        level: e <= 20 ? 1 : e <= 40 ? 2 : e <= 60 ? 3 : e <= 80 ? 4 : e <= 100 ? 5 : 6,
+        p: { pm2_5: c.pm2_5, pm10: c.pm10, no2: c.nitrogen_dioxide, o3: c.ozone, so2: c.sulphur_dioxide },
+        stamp: c.time ? String(c.time).slice(11, 16) : null
+      };
+    }
+    const pollen = {};
+    let any = false;
+    ["grass_pollen", "birch_pollen", "alder_pollen", "mugwort_pollen", "ragweed_pollen"].forEach(k => { if (c[k] != null) { pollen[k] = c[k]; any = true; } });
+    let uvx = null;
+    const hu = r && r.hourly && r.hourly.uv_index;
+    const vals = (hu || []).filter(v => v != null);
+    if (c.uv_index != null || vals.length) {
+      uvx = { now: c.uv_index != null ? c.uv_index : null, max: vals.length ? Math.max.apply(null, vals) : c.uv_index };
+    }
+    return { air, pollen: any ? pollen : null, uvx };
+  }
+
+  async function owmAir(lat, lon) {
+    const r = await getJson("https://api.openweathermap.org/data/2.5/air_pollution?lat=" + lat + "&lon=" + lon + "&appid=" + WX.OWM_KEY, 6000);
+    const it = r && r.list && r.list[0];
+    if (!it || !it.main) throw fail("формат данных");
+    const comp = it.components || {};
+    const raw = it.main.aqi;
+    return {
+      air: raw ? { eaqi: null, owm: raw, level: Math.max(1, Math.min(6, raw)),
+        p: { pm2_5: comp.pm2_5, pm10: comp.pm10, no2: comp.no2, o3: comp.o3, so2: comp.so2 }, stamp: null } : null,
+      pollen: null, uvx: null
+    };
+  }
+
   async function fetchAir(lat, lon) {
+    const base = "https://air-quality-api.open-meteo.com/v1/air-quality?latitude=" + lat + "&longitude=" + lon + "&timezone=auto";
+    const pol = "alder_pollen,birch_pollen,grass_pollen,mugwort_pollen,ragweed_pollen";
+    const full = base + "&forecast_days=1&current=european_aqi,pm2_5,pm10,nitrogen_dioxide,ozone,sulphur_dioxide,uv_index," + pol + "&hourly=uv_index";
+    const mini = base + "&current=european_aqi," + pol;
     try {
-      const url = "https://air-quality-api.open-meteo.com/v1/air-quality?latitude=" + lat + "&longitude=" + lon +
-        "&timezone=auto&current=european_aqi,alder_pollen,birch_pollen,grass_pollen,mugwort_pollen,ragweed_pollen";
-      const r = await getJson(url, 8000);
-      const c = (r && r.current) || {};
-      let air = null;
-      if (c.european_aqi != null) {
-        const e = c.european_aqi;
-        air = { eaqi: Math.round(e), level: e <= 20 ? 1 : e <= 40 ? 2 : e <= 60 ? 3 : e <= 80 ? 4 : 5 };
-      }
-      const keys = ["grass_pollen", "birch_pollen", "alder_pollen", "mugwort_pollen", "ragweed_pollen"];
-      const pollen = {};
-      let any = false;
-      keys.forEach(k => { if (c[k] != null) { pollen[k] = c[k]; any = true; } });
-      return { air, pollen: any ? pollen : null };
+      let r;
+      try { r = await getJson(full, 9000); }
+      catch (e) { if (e && e.code === "HTTP 400") r = await getJson(mini, 9000); else throw e; }
+      return parseAir(r);
     } catch (e) {
       if (!WX.OWM_KEY) throw e;
-      const r = await getJson("https://api.openweathermap.org/data/2.5/air_pollution?lat=" + lat + "&lon=" + lon + "&appid=" + WX.OWM_KEY, 6000);
-      const aqi = r && r.list && r.list[0] && r.list[0].main && r.list[0].main.aqi;
-      return { air: aqi ? { eaqi: null, level: Math.max(1, Math.min(5, aqi)) } : null, pollen: null };
+      return owmAir(lat, lon);
     }
   }
 
+  const setSlot = (el, html) => { if (el && el.__html !== html) { el.innerHTML = html; el.__html = html; } };
+
   async function loadExtras(data, seq) {
+    // свежие данные (младше 10 минут) не перезапрашиваем — не нагружаем API
+    if (data.air && data.extrasAt && Date.now() - data.extrasAt < 10 * 60 * 1000) return;
     try {
       const x = await fetchAir(data.lat, data.lon);
       if (seq !== state.seq || state.data !== data) return; // пользователь уже ушёл в другой город
       data.air = x.air;
       data.pollen = x.pollen;
+      data.uvx = x.uvx;
+      data.extrasAt = Date.now();
       writeCache(data);
-      const a = $("aqiSlot"); if (a) a.innerHTML = aqiInner(data);
-      const p = $("pollenSlot"); if (p) p.innerHTML = pollenCard(data);
+      setSlot($("aqiSlot"), aqiInner(data));
+      setSlot($("pollenSlot"), pollenCard(data));
+      setSlot($("uvCard"), uvCard(data));
     } catch (e) { /* не критично */ }
   }
 
   // =====================================================================
   //  Вычисления для карточек
   // =====================================================================
-  const AQI = {
-    ru: [
-      null,
-      ["Отлично", "Качество воздуха отличное. Можно спокойно гулять.", 10],
-      ["Хорошо", "Качество воздуха приемлемое. Людям с повышенной чувствительностью стоит сократить время на улице.", 30],
-      ["Умеренно", "Чувствительным людям лучше ограничить активность на улице.", 50],
-      ["Плохо", "Воздух загрязнён. Сократите время на улице.", 70],
-      ["Опасно", "Очень высокий уровень загрязнения. Оставайтесь в помещении.", 90]
-    ],
-    en: [
-      null,
-      ["Excellent", "Air quality is excellent. Enjoy the outdoors.", 10],
-      ["Good", "Air quality is acceptable. Very sensitive people may want to limit time outside.", 30],
-      ["Moderate", "Sensitive people should limit outdoor activity.", 50],
-      ["Poor", "The air is polluted. Reduce time outdoors.", 70],
-      ["Hazardous", "Very high pollution. Stay indoors.", 90]
-    ]
+  // Шкала качества воздуха: 6 ступеней европейского индекса EAQI (границы 20 / 40 / 60 / 80 / 100)
+  const AIR_COLORS = ["#2fd47a", "#9bdc2e", "#f5c518", "#fb8c1a", "#ef4444", "#9f1239"];
+  const AIR_COLORS_DARK = ["#0b8f4a", "#4f8f0a", "#9a7400", "#c2570c", "#c62828", "#9f1239"];
+  const AIR_NAMES = {
+    ru: ["Отлично", "Хорошо", "Умеренно", "Плохо", "Очень плохо", "Опасно"],
+    en: ["Excellent", "Good", "Moderate", "Poor", "Very poor", "Hazardous"]
   };
+  const AIR_TEXT = {
+    ru: ["Воздух чистый. Можно спокойно гулять и заниматься спортом.",
+      "Качество воздуха приемлемое. Очень чувствительным людям стоит быть внимательнее.",
+      "Чувствительным людям лучше ограничить нагрузки на улице.",
+      "Воздух загрязнён. Сократите время и нагрузки на улице.",
+      "Сильное загрязнение. Лучше остаться в помещении.",
+      "Опасный уровень загрязнения. Не выходите без необходимости."],
+    en: ["The air is clean. Enjoy the outdoors.",
+      "Air quality is acceptable. Very sensitive people should take care.",
+      "Sensitive people should limit outdoor activity.",
+      "The air is polluted. Reduce time and effort outdoors.",
+      "Heavy pollution. Better stay indoors.",
+      "Dangerous pollution. Do not go out unless necessary."]
+  };
+  // верхние границы ступеней по каждому веществу, мкг/м³ (европейские пороги EEA, редакция 2024)
+  const POLLUTANTS = [
+    ["pm2_5", "PM2.5", [5, 15, 50, 90, 140]],
+    ["pm10", "PM10", [15, 45, 120, 195, 270]],
+    ["no2", "NO₂", [10, 25, 60, 100, 150]],
+    ["o3", "O₃", [60, 100, 120, 160, 180]],
+    ["so2", "SO₂", [20, 40, 125, 190, 275]]
+  ];
+  const bandIdx = (v, bounds) => { for (let i = 0; i < bounds.length; i++) if (v <= bounds[i]) return i; return bounds.length; };
 
   function windDir(deg) {
     if (deg == null) return "";
@@ -584,7 +634,7 @@
 
   function uvInfo(uv) {
     if (uv == null) return { text: "—", sub: "" };
-    const r = String(Math.round(uv));
+    const r = uv < 10 ? String(Math.round(uv * 10) / 10) : String(Math.round(uv)); // 2.8 остаётся 2.8, а не «3 — слабый»
     if (uv < 3) return { text: r, sub: t("Слабый", "Low") };
     if (uv < 6) return { text: r, sub: t("Умеренный", "Moderate") };
     if (uv < 8) return { text: r, sub: t("Высокий", "High") };
@@ -620,6 +670,11 @@
     return { name: names[idx], icon: icons[idx], illum: Math.round((1 - Math.cos(2 * Math.PI * ph)) / 2 * 100) };
   }
 
+  const POLLEN_COLORS = ["#94a3b8", "#2fd47a", "#f5c518", "#fb8c1a", "#ef4444"];
+  const pollenLvl = v => (v < 1 ? 0 : v < 10 ? 1 : v < 50 ? 2 : v < 100 ? 3 : 4);
+  const pollenName = l => (settings.lang === "en"
+    ? ["None", "Low", "Moderate", "High", "Very high"] : ["Нет", "Низкий", "Умеренный", "Высокий", "Очень высокий"])[l];
+
   function pollenSummary(p) {
     if (!p) return null;
     const keys = [
@@ -628,16 +683,17 @@
       ["ragweed_pollen", t("Амброзия", "Ragweed")]
     ];
     const items = [];
-    let max = 0;
+    let top = 0;
     keys.forEach(([k, label]) => {
       const v = p[k];
       if (v == null || v < 0) return;
-      max = Math.max(max, v);
-      items.push({ label, v: Math.round(v) });
+      const lvl = pollenLvl(v);
+      top = Math.max(top, lvl);
+      items.push({ label, v: Math.round(v), lvl });
     });
     if (!items.length) return null;
-    const level = max < 10 ? t("Низкий", "Low") : max < 50 ? t("Умеренный", "Moderate") : max < 100 ? t("Высокий", "High") : t("Очень высокий", "Very high");
-    return { level, items };
+    items.sort((a, b) => b.lvl - a.lvl || b.v - a.v);
+    return { top, items };
   }
 
   // Ряд для «по часам»: «сейчас» + каждые N часов из почасовых данных.
@@ -707,26 +763,74 @@
       <path d="${line}" fill="none" stroke="#38bdf8" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>${dots}${labels}</svg>`;
   }
 
+  // Круговая шкала EAQI: шесть цветных ступеней, активная подсвечена, указатель плавно «выезжает» на значение
+  function aqiGauge(a) {
+    const cx = 100, cy = 100, R = 82;
+    const pt = (deg, r) => [cx + r * Math.cos(deg * Math.PI / 180), cy - r * Math.sin(deg * Math.PI / 180)];
+    let arcs = "";
+    for (let i = 0; i < 6; i++) {
+      const [x0, y0] = pt(180 - i * 30 - 2.4, R), [x1, y1] = pt(180 - (i + 1) * 30 + 2.4, R);
+      arcs += `<path class="arc" d="M${x0.toFixed(1)} ${y0.toFixed(1)} A${R} ${R} 0 0 1 ${x1.toFixed(1)} ${y1.toFixed(1)}" stroke="${AIR_COLORS[i]}"${i === a.level - 1 ? "" : ' opacity=".35"'}/>`;
+    }
+    const val = a.eaqi != null ? a.eaqi : (a.level - 1) * 20 + 10; // у запасного источника только ступень — ставим в середину
+    const ang = Math.max(0, Math.min(120, val)) / 120 * 180;
+    const col = AIR_COLORS[a.level - 1];
+    const num = a.eaqi != null ? a.eaqi : a.owm;
+    const cap = a.eaqi != null ? "EAQI" : t("из 5", "of 5");
+    return `<svg viewBox="0 0 200 128" role="img" aria-label="${t("Индекс качества воздуха", "Air quality index")} ${num}">
+      ${arcs}
+      <g class="aqi-needle" style="--a:${ang.toFixed(1)}deg;transform:rotate(${ang.toFixed(1)}deg)">
+        <circle cx="${cx - R}" cy="${cy}" r="11" fill="#fff" stroke="rgba(15,23,42,.35)" stroke-width="1.5"/>
+        <circle cx="${cx - R}" cy="${cy}" r="5.5" fill="${col}"/>
+      </g>
+      <text class="num" x="100" y="98" text-anchor="middle">${num}</text>
+      <text class="cap" x="100" y="118" text-anchor="middle">${cap}</text></svg>`;
+  }
+
   function aqiInner(data) {
     const a = data.air;
     const label = `<div class="aqi-label">${t("Качество воздуха", "Air quality")}</div>`;
     if (!a) {
       return label + `<div class="aqi-title">${t("Нет данных", "No data")}</div>
-        <div class="aqi-desc">${t("Не удалось получить качество воздуха", "Air quality unavailable")}</div>`;
+        <div class="aqi-desc" style="margin-bottom:0">${t("Не удалось получить качество воздуха", "Air quality unavailable")}</div>`;
     }
-    const info = AQI[settings.lang === "en" ? "en" : "ru"][a.level];
-    return label + `<div class="aqi-title">${info[0]}${a.eaqi != null ? `<small>EAQI ${a.eaqi}</small>` : ""}</div>
-      <div class="aqi-desc">${info[1]}</div>
-      <div class="aqi-bar"><div class="aqi-dot" style="left:${info[2]}%"></div></div>`;
+    const lg = settings.lang === "en" ? "en" : "ru";
+    const col = AIR_COLORS[a.level - 1];
+    const tiles = POLLUTANTS.filter(x => a.p && a.p[x[0]] != null).map(x => {
+      const v = a.p[x[0]];
+      return `<div class="aqi-tile" style="--c:${AIR_COLORS[bandIdx(v, x[2])]}"><div class="n">${x[1]}</div><div class="v">${v < 10 ? Math.round(v * 10) / 10 : Math.round(v)}</div></div>`;
+    }).join("");
+    return label + `<div class="aqi-body">
+        <div class="aqi-gauge">${aqiGauge(a)}</div>
+        <div class="aqi-side">
+          <div class="aqi-title" style="--c:${col};--cd:${AIR_COLORS_DARK[a.level - 1]}">${AIR_NAMES[lg][a.level - 1]}</div>
+          <div class="aqi-desc">${AIR_TEXT[lg][a.level - 1]}</div>
+        </div>
+      </div>
+      ${tiles ? `<div class="aqi-tiles">${tiles}</div>` : ""}
+      <div class="aqi-foot">${tiles ? t("мкг/м³", "µg/m³") + " · " : ""}${a.stamp ? t("данные на ", "data for ") + a.stamp + " · " : ""}CAMS · Open-Meteo</div>`;
   }
 
   function pollenCard(data) {
     const pol = pollenSummary(data.pollen);
     if (!pol) return "";
+    const stamp = data.air && data.air.stamp ? `<div class="pollen-stamp">${t("данные на ", "data for ")}${data.air.stamp}</div>` : "";
     return `<div class="pollen-card">
-      <div class="pollen-title">🌼 ${t("Пыльца", "Pollen")}</div>
-      <div class="pollen-level">${pol.level}</div>
-      <div class="pollen-items">${pol.items.map(i => `<span class="pollen-chip">${i.label}: ${i.v}</span>`).join("")}</div></div>`;
+      <div class="pollen-head"><div class="pollen-title">🌼 ${t("Пыльца", "Pollen")}</div>${stamp}</div>
+      <div class="pollen-level"><span class="lvl-dot" style="background:${POLLEN_COLORS[pol.top]};color:${POLLEN_COLORS[pol.top]}"></span>${pol.top === 0 ? t("Пыльцы в воздухе нет", "No pollen in the air") : pollenName(pol.top)}</div>
+      <div class="pollen-items">${pol.items.map(i => `<span class="pollen-chip" style="--c:${POLLEN_COLORS[i.lvl]}">${i.label}<b>${i.v}</b></span>`).join("")}</div>
+      <div class="pollen-note">${t("зёрен/м³ · ", "grains/m³ · ")}CAMS · Open-Meteo</div></div>`;
+  }
+
+  // УФ: максимум за день (из прогноза, а если его нет — из API воздуха) и текущее значение
+  function uvCard(data) {
+    const today = data.daily[0] || {};
+    const maxUv = today.uv != null ? today.uv : (data.uvx ? data.uvx.max : null);
+    const now = data.uvx && data.uvx.now != null ? data.uvx.now : null;
+    const u = uvInfo(maxUv);
+    return `<div class="d-icon">☀️</div><div class="d-label">${t("УФ", "UV")}</div>
+      <div class="d-value">${u.text}</div><div class="d-sub">${u.sub}</div>
+      ${now != null ? `<div class="d-sub">${t("сейчас ", "now ")}${Math.round(now * 10) / 10}</div>` : ""}`;
   }
 
   function sunProgressPct(sr, ss) {
@@ -773,7 +877,6 @@
       : "";
 
     const moon = moonPhase(nowSec);
-    const uv = uvInfo(today.uv);
     const vis = cur.visibility != null
       ? (cur.visibility >= 1000 ? Math.round(cur.visibility / 1000) : Math.round(cur.visibility / 100) / 10)
       : null;
@@ -818,8 +921,7 @@
       <div class="aqi-card anim-fade-up delay-2" id="aqiSlot">${aqiInner(data)}</div>
 
       <div class="details-grid anim-fade-up delay-3">
-        <div class="detail-card"><div class="d-icon">☀️</div><div class="d-label">${t("УФ", "UV")}</div>
-          <div class="d-value">${uv.text}</div><div class="d-sub">${uv.sub}</div></div>
+        <div class="detail-card" id="uvCard">${uvCard(data)}</div>
         <div class="detail-card"><div class="d-icon">🌡️</div><div class="d-label">${t("Ощущается как", "Feels like")}</div>
           <div class="d-value">${toTemp(cur.feels)}${tempSym()}</div></div>
         <div class="detail-card"><div class="d-icon">💧</div><div class="d-label">${t("Влажность", "Humidity")}</div>
@@ -867,8 +969,11 @@
       </div>
       <div class="daily-list" id="dailyList">${dayRows(data)}</div>
 
-      <div class="footer anim-fade-up delay-5">${data.src === "owm" ? "OpenWeatherMap" : "Open-Meteo"} · <span id="updatedLabel">${t("обновлено ", "updated ")}${agoText(data.fetchedAt)}</span> · v${APP_VERSION}${data.src === "owm" && data.note ? `<div class="err-details" style="margin-top:6px">${esc(t("Основной источник недоступен: ", "Primary source unavailable: "))}${esc(data.note)}</div>` : ""}</div>
+      <div class="footer anim-fade-up delay-5">${data.src === "owm" ? "OpenWeatherMap" : "Open-Meteo"} · <span id="updatedLabel">${t("обновлено ", "updated ")}${agoText(data.fetchedAt)}</span> · <button type="button" class="refresh-link" data-act="refresh">↻ ${t("обновить", "refresh")}</button> · v${APP_VERSION}${data.src === "owm" && data.note ? `<div class="err-details" style="margin-top:6px">${esc(t("Основной источник недоступен: ", "Primary source unavailable: "))}${esc(data.note)}</div>` : ""}</div>
     `;
+
+    // запоминаем, что показано, — повторная перерисовка карточек без изменений не проигрывает анимацию заново
+    $("aqiSlot").__html = aqiInner(data); $("pollenSlot").__html = pollenCard(data); $("uvCard").__html = uvCard(data);
 
     updateSky();
     applyEffects(data, city);
@@ -920,7 +1025,7 @@
     return d => {
       if (seq !== state.seq || !state.city) return;
       if (Math.abs(d.lat - state.city.lat) > 0.02 || Math.abs(d.lon - state.city.lon) > 0.02) return;
-      if (state.data) { d.air = state.data.air; d.pollen = state.data.pollen; }
+      if (state.data) { d.air = state.data.air; d.pollen = state.data.pollen; d.uvx = state.data.uvx; }
       writeCache(d);
       render(d, state.city, { animate: false });
       afterData(d, seq);
@@ -940,7 +1045,7 @@
     try {
       const data = await fetchWeather(city.lat, city.lon, force, makeUpgrade(seq));
       if (seq !== state.seq) return;
-      if (cached) { data.air = cached.air; data.pollen = cached.pollen; }
+      if (cached) { data.air = cached.air; data.pollen = cached.pollen; data.uvx = cached.uvx; }
       writeCache(data);
       render(data, city, { animate: !cached });
       afterData(data, seq);
@@ -958,7 +1063,7 @@
     try {
       const data = await fetchWeather(state.city.lat, state.city.lon, force, makeUpgrade(seq));
       if (seq !== state.seq) return false;
-      if (state.data && state.data.lat === data.lat) { data.air = state.data.air; data.pollen = state.data.pollen; }
+      if (state.data && state.data.lat === data.lat) { data.air = state.data.air; data.pollen = state.data.pollen; data.uvx = state.data.uvx; }
       writeCache(data);
       render(data, state.city, { animate: false });
       afterData(data, seq);
@@ -1133,8 +1238,8 @@
   const GLFX = (function () {
     const canvas = $("cloudGL");
     const PHASE = {
-      dawn:   { light: [1.0, 0.88, 0.80],  shade: [0.60, 0.62, 0.74] },
-      day:    { light: [1.0, 1.0, 1.0],    shade: [0.64, 0.71, 0.82] },
+      dawn:   { light: [1.0, 0.88, 0.80],  shade: [0.54, 0.56, 0.70] },
+      day:    { light: [1.0, 1.0, 1.0],    shade: [0.55, 0.63, 0.77] },
       sunset: { light: [1.0, 0.76, 0.58],  shade: [0.52, 0.45, 0.60] },
       dusk:   { light: [0.62, 0.58, 0.78], shade: [0.28, 0.29, 0.48] },
       night:  { light: [0.34, 0.38, 0.50], shade: [0.11, 0.13, 0.23] }
@@ -1148,26 +1253,33 @@
       "float noise(vec2 p){ vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);",
       "  float a = hash(i), b = hash(i + vec2(1.0, 0.0)), c = hash(i + vec2(0.0, 1.0)), d = hash(i + vec2(1.0, 1.0));",
       "  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y); }",
-      "float fbm(vec2 p){ float v = 0.0, a = 0.5; for (int i = 0; i < 5; i++){ v += a * noise(p); p = p * 2.03 + vec2(1.7, 9.2); a *= 0.5; } return v; }",
-      "float field(vec2 p, vec2 w, float t){ return fbm(p + 0.85 * (w - 0.5) + vec2(t * 0.020, 0.0)); }",
+      "float fbm3(vec2 p){ float v = 0.0, a = 0.5; for (int i = 0; i < 3; i++){ v += a * noise(p); p = p * 2.03 + vec2(1.7, 9.2); a *= 0.5; } return v; }",
+      "float fbm4(vec2 p){ float v = 0.0, a = 0.5; for (int i = 0; i < 4; i++){ v += a * noise(p); p = p * 2.03 + vec2(1.7, 9.2); a *= 0.5; } return v; }",
+      "float fbm5(vec2 p){ float v = 0.0, a = 0.5; for (int i = 0; i < 5; i++){ v += a * noise(p); p = p * 2.03 + vec2(1.7, 9.2); a *= 0.5; } return v; }",
       "void main(){",
       "  vec2 uv = gl_FragCoord.xy / u_res.y;",
       "  float t = u_time;",
       "  vec2 p = uv * vec2(1.15, 1.55) + vec2(t * 0.010, 0.0);",
-      "  vec2 w = vec2(fbm(p * 0.8 + vec2(0.0, t * 0.010)), fbm(p * 0.8 + vec2(5.2, 1.3)));",
-      "  float f = field(p, w, t);",
-      // порог плотности: чем больше покрытие, тем ниже порог
+      "  vec2 w = vec2(fbm3(p * 0.8 + vec2(0.0, t * 0.010)), fbm3(p * 0.8 + vec2(5.2, 1.3)));",
+      "  vec2 q = p + 0.85 * (w - 0.5) + vec2(t * 0.020, 0.0);",
+      // крупная форма облаков и тот же слой, сдвинутый в сторону света (для теней)
+      "  float f  = fbm5(q);",
+      "  float f2 = fbm5(q + vec2(-0.05, 0.07));",
+      // мелкая «барашковая» деталь: рваные края и объём
+      "  vec2 r = q * 3.6 + vec2(3.1, t * 0.030);",
+      "  float det  = fbm4(r);",
+      "  float det2 = fbm4(r + vec2(-0.12, 0.17));",
       "  float th = 0.66 - u_cover * 0.50;",
-      "  float d = smoothstep(th - 0.10, th + 0.32, f);",
-      // освещение сверху-слева: если в сторону света плотность выше, значит мы в тени облака
-      "  float f2 = field(p + vec2(-0.05, 0.07), w, t);",
-      "  float shadow = clamp((f2 - f) * 9.0 + smoothstep(0.50, 0.90, f) * 0.50, 0.0, 1.0);",
+      "  float e = mix(0.030, 0.095, u_cover);",
+      "  float d = smoothstep(th - e, th + e * 1.7, f + (det - 0.5) * 0.15);",
+      "  float shadow = (f2 - f) * 14.0 + smoothstep(0.45, 0.85, f) * 0.65 + (det2 - det) * 4.6;",
+      "  shadow = clamp(shadow, 0.0, 1.0);",
       "  shadow = clamp(shadow * (0.75 + 0.5 * u_dark), 0.0, 1.0);",
       "  vec3 col = mix(u_light, u_shade, shadow);",
+      "  col *= 0.86 + 0.28 * det;",
       // светлая кайма по краям облаков
       "  float rim = clamp(d * (1.0 - d) * 4.0, 0.0, 1.0);",
-      "  col += u_light * rim * 0.22 * (1.0 - u_dark);",
-      // низ экрана темнее в непогоду
+      "  col += u_light * rim * 0.24 * (1.0 - u_dark);",
       "  col *= mix(1.0, 1.0 - 0.30 * u_dark, 1.0 - uv.y);",
       "  float alpha = clamp(d * (0.80 + u_cover * 0.35), 0.0, 1.0);",
       "  gl_FragColor = vec4(col * alpha, alpha);",
@@ -1214,9 +1326,11 @@
       return ok;
     }
 
+    let quality = 1;     // автоподстройка: на слабых телефонах разрешение снижается само
     function resize() {
-      // облака мягкие — рисуем в низком разрешении (≈380 px по высоте) и растягиваем: быстро и экономит батарею
-      const h = window.innerHeight || 800, w = window.innerWidth || 400, k = Math.min(1, 380 / h);
+      // ≈860 px по высоте: достаточно для чётких облаков (раньше было 380 — отсюда «мыло»)
+      const h = window.innerHeight || 800, w = window.innerWidth || 400;
+      const k = Math.min(1.15, 860 / h) * quality;
       const cw = Math.max(2, Math.round(w * k)), ch = Math.max(2, Math.round(h * k));
       if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
       gl.viewport(0, 0, cw, ch);
@@ -1235,9 +1349,17 @@
       gl.drawArrays(gl.TRIANGLES, 0, 3);
     }
 
+    let prevT = 0, slow = 0;
     function loop(now) {
       raf = 0;
-      if (!shown || document.hidden) return;
+      if (!shown || document.hidden) { prevT = 0; return; }
+      // если кадры идут реже ~13/с, снижаем разрешение (не дольше, чем до 45%)
+      if (prevT) {
+        const dtm = now - prevT;
+        if (dtm > 75) slow++; else if (slow > 0) slow--;
+        if (slow > 12 && quality > 0.45) { quality = Math.max(0.45, quality * 0.8); slow = 0; resize(); }
+      }
+      prevT = now;
       if (now - last >= 40) { last = now; draw(now); } // ~25 кадров/с достаточно для медленных облаков
       raf = requestAnimationFrame(loop);
     }
@@ -1281,7 +1403,7 @@
     const kind = kindOf(code);
     let n = 0, tone = "white", dim = 0, fog = false, flash = false, vig = 0, wMin = 70, wMax = 110, gp = null;
     if (kind === "clouds") {
-      if (code === 3) { n = 11; tone = "grey"; dim = 0.4; vig = 0.6; wMin = 110; wMax = 150; gp = [0.95, 0.12]; }
+      if (code === 3) { n = 11; tone = "grey"; dim = 0.4; vig = 0.6; wMin = 110; wMax = 150; gp = [0.9, 0.2]; }
       else { n = 5; wMin = 60; wMax = 95; gp = [0.6, 0]; }
     }
     else if (kind === "clear" && code === 1) { n = 2; wMin = 55; wMax = 80; gp = [0.2, 0]; }
@@ -1597,7 +1719,13 @@
     } else if (el.dataset.act === "fav") toggleFavorite();
     else if (el.dataset.act === "retry") loadCity(state.city || DEFAULT_CITY, true);
     else if (el.dataset.act === "notif") enableNotifications();
+    else if (el.dataset.act === "refresh") manualRefresh();
   });
+
+  async function manualRefresh() {
+    toast(t("Обновляю…", "Refreshing…"));
+    if (await refresh(true)) toast(t("Данные обновлены", "Data updated"));
+  }
 
   function toggleFavorite() {
     const c = state.city; if (!c) return;
@@ -1763,6 +1891,10 @@
   }, 30 * 1000);
 
   window.addEventListener("online", () => { if (state.city) refresh(true); });
+  // пока приложение открыто, данные сами обновляются раз в 10 минут
+  setInterval(() => {
+    if (!document.hidden && state.data && Date.now() - state.data.fetchedAt > 10 * 60 * 1000) refresh(false);
+  }, 60 * 1000);
 
   if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1")) {
     const hadController = !!navigator.serviceWorker.controller;
