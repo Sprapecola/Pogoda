@@ -4,7 +4,7 @@
   // =====================================================================
   //  Конфиг и хранилище
   // =====================================================================
-  const APP_VERSION = "6.3";
+  const APP_VERSION = "6.4";
   const DEFAULT_CITY = { name: "Урюпинск", lat: 50.8047, lon: 42.0138, country: "RU" };
 
   // Ключи настроек/избранного те же, что в старой версии — данные не потеряются
@@ -466,20 +466,14 @@
     });
   }
 
-  async function fetchWeather(lat, lon, force) {
+  async function fetchWeather(lat, lon, force, onUpgrade) {
     const k = keyFor(lat, lon);
     const mem = memCache.get(k);
     if (!force && mem && Date.now() - mem.fetchedAt < MEM_FRESH_MS) return mem;
 
-    // Браузер точно знает, что сети нет — не тратим время на попытки, сразу показываем сохранённые данные
-    if (navigator.onLine === false) {
-      const e = new Error("offline");
-      e.details = t("нет подключения к сети", "no network connection");
-      throw e;
-    }
-
+    // navigator.onLine намеренно НЕ используем: на Android (особенно с VPN) он бывает false при рабочей сети.
     const errors = [];
-    let finished = false, owPromise = null;
+    let hedgeOver = false, owPromise = null;
     const startOw = () => {
       if (!owPromise) {
         owPromise = fetchOwm(lat, lon).catch(e => { errors.push("OpenWeatherMap: " + reasonOf(e)); throw e; });
@@ -493,21 +487,32 @@
       try { return await fetchOpenMeteo(lat, lon); }
       catch (e1) {
         errors.push("Open-Meteo: " + reasonOf(e1));
-        if (finished) throw e1;
         startOw();
         await sleep(1200);
         return await fetchOpenMeteo(lat, lon);
       }
     })();
-    const hedge = sleep(HEDGE_MS).then(() => (finished ? new Promise(() => {}) : startOw()));
+    omPromise.catch(() => {});
+    const hedge = sleep(HEDGE_MS).then(() => (hedgeOver ? new Promise(() => {}) : startOw()));
 
+    let res;
     try {
-      return await firstOk([omPromise, hedge, omPromise.catch(() => startOw())]);
+      res = await firstOk([omPromise, hedge, omPromise.catch(() => startOw())]);
     } catch (e) {
+      hedgeOver = true;
       const err = new Error("all providers failed");
       err.details = errors.join(" · ");
       throw err;
-    } finally { finished = true; }
+    }
+    hedgeOver = true;
+
+    if (res.src === "owm") {
+      // Показываем запасные данные сразу, но Open-Meteo не бросаем: как только он ответит, картинка обновится до полной
+      res.note = errors.filter(x => x.indexOf("Open-Meteo") === 0).join(" · ") ||
+        t("Open-Meteo не ответил за 4,5 с", "Open-Meteo did not answer in 4.5 s");
+      if (onUpgrade) omPromise.then(d => { if (d) onUpgrade(d); }, () => {});
+    }
+    return res;
   }
 
   // Воздух и пыльца: Open-Meteo, а если не ответил — AQI из OpenWeatherMap
@@ -751,7 +756,7 @@
 
     let pill = "";
     if (opts.status === "updating") pill = `<div class="status-pill">${t("Обновление…", "Updating…")}</div>`;
-    else if (opts.status === "offline") pill = `<div class="status-pill offline">${t("Офлайн · обновлено ", "Offline · updated ")}${agoText(data.fetchedAt)}</div>`;
+    else if (opts.status === "offline") pill = `<div class="status-pill offline">${t("Нет связи · обновлено ", "No connection · updated ")}${agoText(data.fetchedAt)}</div>${opts.reason ? `<div class="err-details" style="margin:-4px 0 10px">${esc(opts.reason)}</div>` : ""}`;
 
     // «Сравнение со вчера»: прогноз на сегодня vs вчера (раньше сравнивалась текущая температура со средним, да ещё и °F считались неверно)
     let hist = "";
@@ -862,7 +867,7 @@
       </div>
       <div class="daily-list" id="dailyList">${dayRows(data)}</div>
 
-      <div class="footer anim-fade-up delay-5">${data.src === "owm" ? "OpenWeatherMap" : "Open-Meteo"} · <span id="updatedLabel">${t("обновлено ", "updated ")}${agoText(data.fetchedAt)}</span> · v${APP_VERSION}</div>
+      <div class="footer anim-fade-up delay-5">${data.src === "owm" ? "OpenWeatherMap" : "Open-Meteo"} · <span id="updatedLabel">${t("обновлено ", "updated ")}${agoText(data.fetchedAt)}</span> · v${APP_VERSION}${data.src === "owm" && data.note ? `<div class="err-details" style="margin-top:6px">${esc(t("Основной источник недоступен: ", "Primary source unavailable: "))}${esc(data.note)}</div>` : ""}</div>
     `;
 
     updateSky();
@@ -910,6 +915,18 @@
     return { name: String(c.name || "—"), lat: Number(c.lat), lon: Number(c.lon), country: c.country || "" };
   }
 
+  // Open-Meteo ответил позже запасного источника — заменяем данные на полные (16 дней, УФ, вчерашний день)
+  function makeUpgrade(seq) {
+    return d => {
+      if (seq !== state.seq || !state.city) return;
+      if (Math.abs(d.lat - state.city.lat) > 0.02 || Math.abs(d.lon - state.city.lon) > 0.02) return;
+      if (state.data) { d.air = state.data.air; d.pollen = state.data.pollen; }
+      writeCache(d);
+      render(d, state.city, { animate: false });
+      afterData(d, seq);
+    };
+  }
+
   async function loadCity(cityIn, force) {
     const city = normalizeCity(cityIn);
     const seq = ++state.seq;
@@ -921,7 +938,7 @@
     else { state.data = null; showLoading(city); updateSky(); }
 
     try {
-      const data = await fetchWeather(city.lat, city.lon, force);
+      const data = await fetchWeather(city.lat, city.lon, force, makeUpgrade(seq));
       if (seq !== state.seq) return;
       if (cached) { data.air = cached.air; data.pollen = cached.pollen; }
       writeCache(data);
@@ -929,7 +946,7 @@
       afterData(data, seq);
     } catch (e) {
       if (seq !== state.seq) return;
-      if (cached) render(cached, city, { animate: false, status: "offline" });
+      if (cached) render(cached, city, { animate: false, status: "offline", reason: e && e.details });
       else showError(t("Не удалось загрузить погоду. Проверьте интернет.", "Could not load weather. Check your connection."), e && e.details);
     }
   }
@@ -939,7 +956,7 @@
     if (!state.city) return false;
     const seq = ++state.seq;
     try {
-      const data = await fetchWeather(state.city.lat, state.city.lon, force);
+      const data = await fetchWeather(state.city.lat, state.city.lon, force, makeUpgrade(seq));
       if (seq !== state.seq) return false;
       if (state.data && state.data.lat === data.lat) { data.air = state.data.air; data.pollen = state.data.pollen; }
       writeCache(data);
@@ -948,7 +965,7 @@
       return true;
     } catch (e) {
       if (seq === state.seq) {
-        if (state.data) render(state.data, state.city, { animate: false, status: "offline" });
+        if (state.data) render(state.data, state.city, { animate: false, status: "offline", reason: e && e.details });
         toast(t("Нет соединения — показаны сохранённые данные", "No connection — showing saved data"));
       }
       return false;
@@ -1010,9 +1027,11 @@
       moon.style.left = (8 + moonProg * 84) + "%";
       moon.style.top = (38 - Math.sin(Math.max(0.05, Math.min(0.95, moonProg)) * Math.PI) * 30) + "%";
       moon.style.opacity = String(1 - cover * 0.8);
+      moon.style.filter = cover > 0.05 ? `blur(${(cover * 10).toFixed(1)}px)` : "none";
     } else moon.style.opacity = "0";
 
     sky.style.background = P.bg;
+    sky.style.filter = cover > 0.3 ? `saturate(${(1 - cover * 0.65).toFixed(2)})` : "none";
     stars.style.opacity = P.stars * (1 - cover);
     stars.style.animation = P.stars > 0.3 ? "twinkle 4s ease-in-out infinite alternate" : "none";
     sun.style.opacity = P.sun * (1 - cover * 0.85);
@@ -1021,12 +1040,14 @@
     sun.style.filter = cover > 0.05
       ? `blur(${(cover * 20).toFixed(1)}px) saturate(${(1 - cover * 0.8).toFixed(2)}) brightness(${(1 + cover * 0.35).toFixed(2)})`
       : "none";
-    horizon.style.opacity = P.hOp;
+    horizon.style.opacity = P.hOp * (1 - cover * 0.75);
     horizon.style.background = P.hBg;
     document.documentElement.style.background = P.html;
     const meta = document.querySelector('meta[name="theme-color"]');
     if (meta) meta.setAttribute("content", P.html); // цвет системной строки состояния = цвет неба
-    document.body.classList.toggle("day-mode", P.day);
+    // в грозу небо тёмное даже днём — оставляем светлый текст
+    const stormy = d && kindOf(d.current.code) === "storm";
+    document.body.classList.toggle("day-mode", P.day && !stormy);
     paintFx(phase);
   }
 
@@ -1105,7 +1126,149 @@
     return parts.join(",");
   }
 
-  // Три «глубины»: дальние облака мельче, размытее и медленнее, ближние крупнее, чётче и быстрее
+  // =====================================================================
+  //  Облака на WebGL: процедурный шум (fbm) с тенями и подсветкой по времени суток.
+  //  Если WebGL недоступен, остаются прежние CSS-облака.
+  // =====================================================================
+  const GLFX = (function () {
+    const canvas = $("cloudGL");
+    const PHASE = {
+      dawn:   { light: [1.0, 0.88, 0.80],  shade: [0.60, 0.62, 0.74] },
+      day:    { light: [1.0, 1.0, 1.0],    shade: [0.64, 0.71, 0.82] },
+      sunset: { light: [1.0, 0.76, 0.58],  shade: [0.52, 0.45, 0.60] },
+      dusk:   { light: [0.62, 0.58, 0.78], shade: [0.28, 0.29, 0.48] },
+      night:  { light: [0.34, 0.38, 0.50], shade: [0.11, 0.13, 0.23] }
+    };
+    const VS = "attribute vec2 a; void main(){ gl_Position = vec4(a, 0.0, 1.0); }";
+    const FS = [
+      "precision highp float;",
+      "uniform vec2 u_res; uniform float u_time; uniform float u_cover; uniform float u_dark;",
+      "uniform vec3 u_light; uniform vec3 u_shade;",
+      "float hash(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }",
+      "float noise(vec2 p){ vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);",
+      "  float a = hash(i), b = hash(i + vec2(1.0, 0.0)), c = hash(i + vec2(0.0, 1.0)), d = hash(i + vec2(1.0, 1.0));",
+      "  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y); }",
+      "float fbm(vec2 p){ float v = 0.0, a = 0.5; for (int i = 0; i < 5; i++){ v += a * noise(p); p = p * 2.03 + vec2(1.7, 9.2); a *= 0.5; } return v; }",
+      "float field(vec2 p, vec2 w, float t){ return fbm(p + 0.85 * (w - 0.5) + vec2(t * 0.020, 0.0)); }",
+      "void main(){",
+      "  vec2 uv = gl_FragCoord.xy / u_res.y;",
+      "  float t = u_time;",
+      "  vec2 p = uv * vec2(1.15, 1.55) + vec2(t * 0.010, 0.0);",
+      "  vec2 w = vec2(fbm(p * 0.8 + vec2(0.0, t * 0.010)), fbm(p * 0.8 + vec2(5.2, 1.3)));",
+      "  float f = field(p, w, t);",
+      // порог плотности: чем больше покрытие, тем ниже порог
+      "  float th = 0.66 - u_cover * 0.50;",
+      "  float d = smoothstep(th - 0.10, th + 0.32, f);",
+      // освещение сверху-слева: если в сторону света плотность выше, значит мы в тени облака
+      "  float f2 = field(p + vec2(-0.05, 0.07), w, t);",
+      "  float shadow = clamp((f2 - f) * 9.0 + smoothstep(0.50, 0.90, f) * 0.50, 0.0, 1.0);",
+      "  shadow = clamp(shadow * (0.75 + 0.5 * u_dark), 0.0, 1.0);",
+      "  vec3 col = mix(u_light, u_shade, shadow);",
+      // светлая кайма по краям облаков
+      "  float rim = clamp(d * (1.0 - d) * 4.0, 0.0, 1.0);",
+      "  col += u_light * rim * 0.22 * (1.0 - u_dark);",
+      // низ экрана темнее в непогоду
+      "  col *= mix(1.0, 1.0 - 0.30 * u_dark, 1.0 - uv.y);",
+      "  float alpha = clamp(d * (0.80 + u_cover * 0.35), 0.0, 1.0);",
+      "  gl_FragColor = vec4(col * alpha, alpha);",
+      "}"
+    ].join("\n");
+
+    let gl = null, ok = null, raf = 0, shown = false, last = 0;
+    const loc = {};
+    const st = { cover: 0, dark: 0, phase: "day" };
+    const T0 = performance.now();
+
+    function init() {
+      if (ok !== null) return ok;
+      ok = false;
+      if (!canvas) return false;
+      try {
+        gl = canvas.getContext("webgl", { alpha: true, premultipliedAlpha: true, antialias: false, depth: false, stencil: false, powerPreference: "low-power" });
+        if (!gl) return false;
+        const hp = gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER, gl.HIGH_FLOAT);
+        if (!hp || hp.precision === 0) return false; // без highp шум даёт артефакты — лучше CSS-облака
+        const sh = (type, src) => {
+          const x = gl.createShader(type); gl.shaderSource(x, src); gl.compileShader(x);
+          if (!gl.getShaderParameter(x, gl.COMPILE_STATUS)) throw new Error("shader");
+          return x;
+        };
+        const prog = gl.createProgram();
+        gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS));
+        gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS));
+        gl.bindAttribLocation(prog, 0, "a");
+        gl.linkProgram(prog);
+        if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error("link");
+        gl.useProgram(prog);
+        gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
+        gl.enableVertexAttribArray(0);
+        gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+        ["u_res", "u_time", "u_cover", "u_dark", "u_light", "u_shade"].forEach(n => { loc[n] = gl.getUniformLocation(prog, n); });
+        canvas.addEventListener("webglcontextlost", e => {
+          e.preventDefault(); ok = false; hide();
+          state.fxCode = undefined; updateSky(); // перерисуем CSS-облаками
+        });
+        ok = true;
+      } catch (e) { ok = false; }
+      return ok;
+    }
+
+    function resize() {
+      // облака мягкие — рисуем в низком разрешении (≈380 px по высоте) и растягиваем: быстро и экономит батарею
+      const h = window.innerHeight || 800, w = window.innerWidth || 400, k = Math.min(1, 380 / h);
+      const cw = Math.max(2, Math.round(w * k)), ch = Math.max(2, Math.round(h * k));
+      if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
+      gl.viewport(0, 0, cw, ch);
+    }
+
+    function draw(now) {
+      if (!gl) return;
+      const P = PHASE[st.phase] || PHASE.day, d = st.dark;
+      const L = P.light.map(v => v * (1 - d * 0.58)), S = P.shade.map(v => v * (1 - d * 0.72));
+      gl.uniform2f(loc.u_res, canvas.width, canvas.height);
+      gl.uniform1f(loc.u_time, reduceMotion ? 40 : (now - T0) / 1000);
+      gl.uniform1f(loc.u_cover, st.cover);
+      gl.uniform1f(loc.u_dark, d);
+      gl.uniform3f(loc.u_light, L[0], L[1], L[2]);
+      gl.uniform3f(loc.u_shade, S[0], S[1], S[2]);
+      gl.drawArrays(gl.TRIANGLES, 0, 3);
+    }
+
+    function loop(now) {
+      raf = 0;
+      if (!shown || document.hidden) return;
+      if (now - last >= 40) { last = now; draw(now); } // ~25 кадров/с достаточно для медленных облаков
+      raf = requestAnimationFrame(loop);
+    }
+    function start() { if (!raf && !reduceMotion) raf = requestAnimationFrame(loop); }
+
+    function show(cover, dark) {
+      if (!init()) return false;
+      st.cover = cover; st.dark = dark;
+      resize();
+      canvas.classList.add("on");
+      shown = true;
+      draw(performance.now());
+      start();
+      return true;
+    }
+    function hide() {
+      shown = false;
+      if (raf) { cancelAnimationFrame(raf); raf = 0; }
+      if (canvas) canvas.classList.remove("on");
+    }
+    function setPhase(name) {
+      if (name === st.phase) return;
+      st.phase = name;
+      if (shown) draw(performance.now());
+    }
+    window.addEventListener("resize", () => { if (shown) { resize(); draw(performance.now()); } });
+    document.addEventListener("visibilitychange", () => { if (!document.hidden && shown) start(); });
+    return { show, hide, setPhase, available: init };
+  })();
+
+  // Три «глубины» CSS-облаков (запасной вариант без WebGL)
   const DEPTH = [
     { share: 0.28, top: [0, 30],  w: 0.75, op: [0.5, 0.7],   blur: 3, speed: 1.7 },
     { share: 0.44, top: [8, 48],  w: 1,    op: [0.85, 0.97], blur: 0, speed: 1 },
@@ -1116,13 +1279,21 @@
     const box = $("cloudFx"); if (!box) return;
     box.innerHTML = "";
     const kind = kindOf(code);
-    let n = 0, tone = "white", dim = 0, fog = false, flash = false, vig = 0, wMin = 70, wMax = 110;
-    if (kind === "clouds") { if (code === 3) { n = 11; tone = "grey"; dim = 0.4; vig = 0.6; wMin = 110; wMax = 150; } else { n = 5; wMin = 60; wMax = 95; } }
-    else if (kind === "clear" && code === 1) { n = 2; wMin = 55; wMax = 80; }
-    else if (kind === "rain") { n = 11; tone = "dark"; dim = 0.42; vig = 0.9; wMin = 100; wMax = 140; }
-    else if (kind === "storm") { n = 12; tone = "dark"; dim = 0.52; vig = 1; flash = true; wMin = 100; wMax = 145; }
-    else if (kind === "snow") { n = 8; tone = "grey"; dim = 0.28; vig = 0.5; wMin = 90; wMax = 125; }
+    let n = 0, tone = "white", dim = 0, fog = false, flash = false, vig = 0, wMin = 70, wMax = 110, gp = null;
+    if (kind === "clouds") {
+      if (code === 3) { n = 11; tone = "grey"; dim = 0.4; vig = 0.6; wMin = 110; wMax = 150; gp = [0.95, 0.12]; }
+      else { n = 5; wMin = 60; wMax = 95; gp = [0.6, 0]; }
+    }
+    else if (kind === "clear" && code === 1) { n = 2; wMin = 55; wMax = 80; gp = [0.2, 0]; }
+    else if (kind === "rain") { n = 11; tone = "dark"; dim = 0.42; vig = 0.9; wMin = 100; wMax = 140; gp = [1, 0.5]; }
+    else if (kind === "storm") { n = 12; tone = "dark"; dim = 0.52; vig = 1; flash = true; wMin = 100; wMax = 145; gp = [1, 0.85]; }
+    else if (kind === "snow") { n = 8; tone = "grey"; dim = 0.28; vig = 0.5; wMin = 90; wMax = 125; gp = [0.9, 0.2]; }
     else if (kind === "fog") { fog = true; dim = 0.2; }
+
+    // WebGL-облака вместо CSS-пятен, если получилось
+    const useGL = !!gp && GLFX.available() && GLFX.show(gp[0], gp[1]);
+    if (!useGL) GLFX.hide();
+    if (useGL) { n = 0; dim = 0; }
 
     const frag = document.createDocumentFragment();
     const add = (cls, css) => { const el = document.createElement("div"); el.className = cls; el.style.cssText = css; frag.appendChild(el); return el; };
@@ -1160,11 +1331,15 @@
     box.appendChild(frag);
   }
 
-  // Вызывается из updateSky: пересобирает слой только при смене погоды, яркость — при смене времени суток
+  // Вызывается из updateSky: пересобирает слой только при смене погоды, яркость и цвет — при смене времени суток
   function paintFx(phase) {
     const box = $("cloudFx"); if (!box) return;
     const code = state.data ? state.data.current.code : null;
-    if (code !== state.fxCode) { state.fxCode = code; if (code == null) box.innerHTML = ""; else buildFx(code); }
+    GLFX.setPhase(phase);
+    if (code !== state.fxCode) {
+      state.fxCode = code;
+      if (code == null) { box.innerHTML = ""; GLFX.hide(); } else buildFx(code);
+    }
     box.style.filter = "brightness(" + (FX_BRIGHT[phase] || 1) + ")";
   }
 
@@ -1488,6 +1663,28 @@
     });
   });
   $("notifEnableBtn").addEventListener("click", enableNotifications);
+
+  // Проверка связи: показывает, какой именно источник доступен и за сколько отвечает
+  async function runDiagnostics() {
+    const out = $("diagOut");
+    out.hidden = false;
+    out.textContent = t("Проверяю…", "Checking…");
+    const lat = state.city ? state.city.lat : 55.75, lon = state.city ? state.city.lon : 37.62;
+    const tests = [
+      ["Open-Meteo", "https://api.open-meteo.com/v1/forecast?latitude=" + lat + "&longitude=" + lon + "&current=temperature_2m"],
+      ["Open-Meteo " + t("воздух", "air"), "https://air-quality-api.open-meteo.com/v1/air-quality?latitude=" + lat + "&longitude=" + lon + "&current=european_aqi"],
+      ["Open-Meteo " + t("поиск", "search"), "https://geocoding-api.open-meteo.com/v1/search?name=Moscow&count=1"]
+    ];
+    if (WX.OWM_KEY) tests.push(["OpenWeatherMap", "https://api.openweathermap.org/data/2.5/weather?lat=" + lat + "&lon=" + lon + "&appid=" + WX.OWM_KEY + "&units=metric"]);
+    const ms = t("мс", "ms");
+    const lines = await Promise.all(tests.map(async ([name, url]) => {
+      const t0 = performance.now();
+      try { await getJson(url, 10000); return "✓ " + name + " — " + Math.round(performance.now() - t0) + " " + ms; }
+      catch (e) { return "✗ " + name + " — " + reasonOf(e) + " (" + Math.round(performance.now() - t0) + " " + ms + ")"; }
+    }));
+    out.textContent = lines.join("\n") + "\n" + t("Браузер сообщает: ", "Browser reports: ") + (navigator.onLine === false ? t("нет сети", "offline") : t("сеть есть", "online"));
+  }
+  $("diagBtn").addEventListener("click", runDiagnostics);
 
   // --- Установка приложения ---
   let installEvent = null;

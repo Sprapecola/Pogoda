@@ -39,6 +39,7 @@
   <div class="horizon-glow" id="horizon"></div>
   <div class="celestial sun" id="sun"></div>
   <div class="celestial moon" id="moon"></div>
+  <canvas id="cloudGL" aria-hidden="true"></canvas>
   <div id="cloudFx" aria-hidden="true"></div>
   <div id="weatherParticles" aria-hidden="true"></div>
   <div class="ptr-indicator" id="ptrIndicator" role="status" aria-live="polite">Потяните, чтобы обновить</div>
@@ -131,6 +132,13 @@
           <button class="settings-opt" type="button" id="installBtn" data-ru="Установить" data-en="Install">Установить</button>
         </div>
       </div>
+      <div class="settings-row">
+        <span data-ru="Проверка связи" data-en="Connection test">Проверка связи</span>
+        <div class="settings-opts">
+          <button class="settings-opt" type="button" id="diagBtn" data-ru="Проверить" data-en="Run">Проверить</button>
+        </div>
+      </div>
+      <div class="settings-hint diag-out" id="diagOut" hidden></div>
       <p class="settings-hint" id="iosHint" hidden
          data-ru="Чтобы установить на iPhone: нажмите «Поделиться» → «На экран «Домой»»."
          data-en="To install on iPhone: tap Share → Add to Home Screen."></p>
