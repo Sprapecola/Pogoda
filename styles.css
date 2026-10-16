@@ -1076,8 +1076,9 @@
 
     .cloud {
       position: absolute; left: 0; will-change: transform; animation: cloudMove linear infinite;
-      border-radius: 50%;
-      filter: blur(0.5px);
+      border-radius: 45% 55% 50% 50%;
+      -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 45%, #000 15%, transparent 78%);
+      mask-image: radial-gradient(ellipse 70% 60% at 50% 45%, #000 15%, transparent 78%);
     }
     /* от «целиком за левым краем» до «целиком за правым» — петля без рывка */
     @keyframes cloudMove {
@@ -1166,16 +1167,7 @@
     .diag-out { white-space: pre-line; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; opacity: .9;
       -webkit-user-select: text; user-select: text; line-height: 1.6; }
 
-    #cloudGL {
-      position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none;
-      opacity: 0; transition: opacity 1.2s ease;
-      /* сглаживание при масштабировании canvas — без «квадратиков» */
-      image-rendering: auto;
-      image-rendering: smooth;
-      -ms-interpolation-mode: bicubic;
-      transform: translateZ(0);
-    }
-    #cloudGL.on { opacity: 1; }
+    #cloudGL { display: none !important; } /* WebGL отключён — только мягкие CSS-облака */
 
     /* =====================================================
        Воздух: круговая шкала и показатели

@@ -4,7 +4,7 @@
   // =====================================================================
   //  Конфиг и хранилище
   // =====================================================================
-  const APP_VERSION = "6.6";
+  const APP_VERSION = "6.7";
   const DEFAULT_CITY = { name: "Урюпинск", lat: 50.8047, lon: 42.0138, country: "RU" };
 
   // Ключи настроек/избранного те же, что в старой версии — данные не потеряются
@@ -370,13 +370,55 @@
   }
   const SEVERITY = { clear: 0, clouds: 1, fog: 2, rain: 3, snow: 4, storm: 5 };
 
+  // Только дни (16) — лёгкий запрос, чтобы у OWM-режима тоже были 7/14 дней
+  async function fetchOmDailyOnly(lat, lon) {
+    const url = "https://api.open-meteo.com/v1/forecast?latitude=" + lat + "&longitude=" + lon +
+      "&timezone=auto&past_days=1&forecast_days=16" +
+      "&daily=weather_code,temperature_2m_max,temperature_2m_min,uv_index_max,precipitation_probability_max,sunrise,sunset";
+    const m = await getJson(url, 12000);
+    if (!m || !m.daily || !m.daily.time) throw fail("формат данных");
+    const off = m.utc_offset_seconds || 0;
+    const D = m.daily;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const todayStr = new Date((nowSec + off) * 1000).toISOString().slice(0, 10);
+    const times = D.time || [];
+    let ti = times.findIndex(x => x >= todayStr);
+    if (ti < 0) ti = 0;
+    const U = s => {
+      // локальная дата-время Open-Meteo → unix
+      const t = Date.parse(String(s).length <= 10 ? s + "T12:00:00" : s);
+      if (!isFinite(t)) return null;
+      // s без зоны: интерпретируем как UTC и вычитаем offset? parseForecast uses localToUnix
+      return Math.floor(t / 1000) - off;
+    };
+    // safer: reuse localToUnix if exists
+    const toUnix = typeof localToUnix === "function"
+      ? s => localToUnix(s, off)
+      : U;
+    const daily = [];
+    for (let i = ti; i < times.length; i++) {
+      daily.push({
+        date: times[i],
+        max: D.temperature_2m_max[i],
+        min: D.temperature_2m_min[i],
+        code: D.weather_code[i],
+        pop: D.precipitation_probability_max ? D.precipitation_probability_max[i] : null,
+        uv: D.uv_index_max ? D.uv_index_max[i] : null,
+        sunrise: D.sunrise && D.sunrise[i] ? toUnix(D.sunrise[i]) : null,
+        sunset: D.sunset && D.sunset[i] ? toUnix(D.sunset[i]) : null
+      });
+    }
+    return { daily, yesterday: ti > 0 ? { max: D.temperature_2m_max[ti - 1], min: D.temperature_2m_min[ti - 1] } : null, tz: off };
+  }
+
   async function fetchOwm(lat, lon) {
     const key = WX.OWM_KEY;
     if (!key) throw fail("нет ключа");
     const q = "?lat=" + lat + "&lon=" + lon + "&appid=" + key + "&units=metric";
-    const [cur, fc] = await Promise.all([
+    const [cur, fc, omDays] = await Promise.all([
       getJson("https://api.openweathermap.org/data/2.5/weather" + q, 8000),
-      getJson("https://api.openweathermap.org/data/2.5/forecast" + q, 8000).catch(() => null)
+      getJson("https://api.openweathermap.org/data/2.5/forecast" + q, 8000).catch(() => null),
+      fetchOmDailyOnly(lat, lon).catch(() => null)
     ]);
     if (!cur || !cur.main) throw fail("формат данных");
 
@@ -430,7 +472,7 @@
       d.pop = Math.max(d.pop, Math.round((it.pop || 0) * 100));
     });
     const keys = Object.keys(byDay).filter(k => k >= todayKey).sort();
-    const daily = keys.map((k, i) => {
+    let daily = keys.map((k, i) => {
       const d = byDay[k];
       // типичная погода дня: самый частый код, при равенстве — тяжелее
       const cnt = {};
@@ -449,6 +491,14 @@
       };
     });
 
+    // 7/14 дней: если Open-Meteo отдал 16 дней — берём их (OWM даёт только ~5)
+    let yesterday = null;
+    if (omDays && omDays.daily && omDays.daily.length >= 7) {
+      daily = omDays.daily;
+      yesterday = omDays.yesterday;
+      if (omDays.tz) { /* keep OWM tz for current clock; days use their own sunrise */ }
+    }
+
     return {
       v: 6, src: "owm", lat: Number(lat), lon: Number(lon), tz, fetchedAt: Date.now(),
       current: {
@@ -458,7 +508,7 @@
         visibility: cur.visibility > 0 ? cur.visibility : null,
         code, isDay: isDayAt(now)
       },
-      hourly, daily, yesterday: null, air: null, pollen: null
+      hourly, daily, yesterday, air: null, pollen: null
     };
   }
 
@@ -1222,18 +1272,16 @@
   function cloudBackground(tone) {
     const T = TONES[tone] || TONES.white;
     const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-    // мягкие эллипсы с длинным затуханием — без резких краёв и «квадратов»
+    // объём: светлая «шапка», середина, тёмное основание — длинное мягкое затухание
     const blob = (rgb, a, w, h, x, y) => {
-      x = clamp(x, w * 0.6, 100 - w * 0.6); y = clamp(y, h * 0.5, 100 - h * 0.5);
-      return `radial-gradient(ellipse ${w.toFixed(0)}% ${h.toFixed(0)}% at ${x.toFixed(0)}% ${y.toFixed(0)}%, rgba(${rgb},${a}) 0%, rgba(${rgb},${(a * 0.4).toFixed(2)}) 38%, rgba(${rgb},0) 72%)`;
+      x = clamp(x, w * 0.45, 100 - w * 0.45);
+      y = clamp(y, h * 0.4, 100 - h * 0.4);
+      return `radial-gradient(ellipse ${w.toFixed(0)}% ${h.toFixed(0)}% at ${x.toFixed(0)}% ${y.toFixed(0)}%, rgba(${rgb},${a}) 0%, rgba(${rgb},${(a * 0.55).toFixed(2)}) 32%, rgba(${rgb},${(a * 0.18).toFixed(2)}) 58%, rgba(${rgb},0) 78%)`;
     };
     const parts = [];
-    const tops = 5 + Math.floor(Math.random() * 2);
-    for (let i = 0; i < tops; i++) parts.push(blob(T.lite, 0.92, rnd(16, 26), rnd(20, 32), rnd(15, 85), rnd(26, 46)));
-    const mids = 3 + Math.floor(Math.random() * 2);
-    for (let i = 0; i < mids; i++) parts.push(blob(T.mid, 0.82, rnd(20, 32), rnd(20, 30), rnd(12, 88), rnd(42, 58)));
-    const base = 3;
-    for (let i = 0; i < base; i++) parts.push(blob(T.shade, 0.72, rnd(20, 30), rnd(16, 24), 18 + i * 28 + rnd(-6, 6), rnd(58, 72)));
+    for (let i = 0; i < 6; i++) parts.push(blob(T.lite, 0.95, rnd(18, 30), rnd(22, 36), rnd(12, 88), rnd(22, 44)));
+    for (let i = 0; i < 4; i++) parts.push(blob(T.mid, 0.88, rnd(22, 34), rnd(22, 32), rnd(10, 90), rnd(40, 58)));
+    for (let i = 0; i < 3; i++) parts.push(blob(T.shade, 0.78, rnd(22, 32), rnd(16, 26), 16 + i * 30 + rnd(-8, 8), rnd(56, 74)));
     return parts.join(",");
   }
 
@@ -1398,11 +1446,11 @@
     return { show, hide, setPhase, available: init };
   })();
 
-  // Три «глубины» CSS-облаков (запасной вариант без WebGL)
+  // Три «глубины» мягких объёмных CSS-облаков
   const DEPTH = [
-    { share: 0.28, top: [0, 30],  w: 0.75, op: [0.5, 0.7],   blur: 3, speed: 1.7 },
-    { share: 0.44, top: [8, 48],  w: 1,    op: [0.85, 0.97], blur: 0, speed: 1 },
-    { share: 0.28, top: [22, 66], w: 1.2,  op: [0.92, 1],    blur: 0, speed: 0.75 }
+    { share: 0.30, top: [0, 28],  w: 0.85, op: [0.45, 0.65], blur: 8, speed: 1.8 },
+    { share: 0.42, top: [6, 46],  w: 1.05, op: [0.75, 0.92], blur: 4, speed: 1.05 },
+    { share: 0.28, top: [20, 62], w: 1.25, op: [0.85, 0.98], blur: 2, speed: 0.8 }
   ];
 
   function buildFx(code) {
@@ -1420,9 +1468,9 @@
     else if (kind === "snow") { n = 8; tone = "grey"; dim = 0.28; vig = 0.5; wMin = 90; wMax = 125; gp = [0.9, 0.2]; }
     else if (kind === "fog") { fog = true; dim = 0.2; }
 
-    // WebGL-облака вместо CSS-пятен, если получилось
-    const useGL = !!gp && GLFX.available() && GLFX.show(gp[0], gp[1]);
-    if (!useGL) GLFX.hide();
+    // WebGL на части телефонов даёт «квадратные» пиксели — только мягкие CSS-облака
+    GLFX.hide();
+    const useGL = false;
     if (useGL) { n = 0; dim = 0; }
 
     const frag = document.createDocumentFragment();
