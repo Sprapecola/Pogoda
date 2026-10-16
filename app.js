@@ -4,7 +4,7 @@
   // =====================================================================
   //  Конфиг и хранилище
   // =====================================================================
-  const APP_VERSION = "6.2";
+  const APP_VERSION = "6.3";
   const DEFAULT_CITY = { name: "Урюпинск", lat: 50.8047, lon: 42.0138, country: "RU" };
 
   // Ключи настроек/избранного те же, что в старой версии — данные не потеряются
@@ -121,6 +121,51 @@
       case "clear": return code === 0 ? (isDay ? "☀️" : "🌙") : (isDay ? "🌤️" : "🌙");
       default: return code === 2 ? (isDay ? "⛅" : "☁️") : "☁️";
     }
+  }
+
+  // ---- Собственные значки погоды (SVG): одинаковые на любом телефоне, с лёгкой анимацией ----
+  const CLOUD_PATH = "M19 47c-6 0-11-4.4-11-10 0-5 3.9-9.2 9-9.9C18.6 22 23.4 18 29.2 18c5.2 0 9.7 3.1 11.6 7.6.8-.2 1.6-.3 2.5-.3 5.7 0 10.2 4.3 10.2 9.6S49.9 47 44.2 47H19z";
+  // облако по целевому прямоугольнику: левый верх (x, y) и ширина w
+  function cloudAt(x, y, w, fill, cls) {
+    const s = w / 45.5;
+    return `<g class="${cls || ""}"><g transform="translate(${(x - 8 * s).toFixed(2)} ${(y - 18 * s).toFixed(2)}) scale(${s.toFixed(3)})">` +
+      `<path d="${CLOUD_PATH}" fill="url(#${fill})"/><path d="${CLOUD_PATH}" fill="none" stroke="#fff" stroke-opacity=".45" stroke-width="1.1"/></g></g>`;
+  }
+  function sunAt(cx, cy, r) {
+    let l = "";
+    for (let i = 0; i < 8; i++) l += `<line x1="${cx}" y1="${cy - r - 4}" x2="${cx}" y2="${cy - r - 8.5}" transform="rotate(${i * 45} ${cx} ${cy})"/>`;
+    return `<g class="rays" style="transform-origin:${cx}px ${cy}px" stroke="#ffc233" stroke-width="3" stroke-linecap="round">${l}</g>` +
+      `<circle cx="${cx}" cy="${cy}" r="${r}" fill="url(#g-sun)"/>`;
+  }
+  const moonAt = (tx, ty, sc) => `<g transform="translate(${tx} ${ty}) scale(${sc})"><path d="M38.5 17.3A17 17 0 1 0 38.5 46.7A14.8 14.8 0 0 1 38.5 17.3z" fill="url(#g-moon)"/></g>`;
+  const STARS = `<circle class="star" cx="48" cy="18" r="1.7" fill="#fff"/><circle class="star s2" cx="53" cy="29" r="1.2" fill="#fff"/><circle class="star s3" cx="44" cy="10" r="1.1" fill="#fff"/>`;
+
+  function iconSvg(code, isDay, anim) {
+    const k = kindOf(code);
+    let b = "";
+    if (k === "clear") {
+      if (code === 0) b = isDay ? sunAt(32, 32, 11) : moonAt(1, 0, 1) + STARS;
+      else b = (isDay ? sunAt(27, 25, 9) : moonAt(-5, -7, 0.85)) + cloudAt(20, 33, 36, "g-cloud", "cl-front");
+    } else if (k === "clouds") {
+      if (code === 2) b = (isDay ? sunAt(24, 24, 9) : moonAt(-7, -8, 0.8)) + cloudAt(14, 28, 42, "g-cloud", "cl-front");
+      else b = cloudAt(5, 13, 34, "g-cloud-dark", "cl-back") + cloudAt(14, 24, 44, "g-cloud", "cl-front");
+    } else if (k === "fog") {
+      b = cloudAt(11, 8, 42, "g-cloud", "cl-front") +
+        `<g stroke="#a3b5d0" stroke-width="3.8" stroke-linecap="round"><path class="fog-l" d="M12 42h40"/><path class="fog-l f2" d="M18 49h34"/><path class="fog-l f3" d="M12 56h28"/></g>`;
+    } else if (k === "rain") {
+      const heavy = code === 65 || code === 82 || code === 67;
+      const sunBehind = isDay && (code === 51 || code === 53 || code === 61 || code === 80);
+      const drops = heavy ? [[20, 42], [28, 46], [36, 42], [44, 46]] : [[22, 42], [32, 46], [42, 42]];
+      b = (sunBehind ? sunAt(46, 17, 7) : "") + cloudAt(8, 12, 46, "g-cloud-dark", "cl-front") +
+        drops.map((d, i) => `<line class="drop" style="animation-delay:${(i * 0.32).toFixed(2)}s" x1="${d[0] + 2}" y1="${d[1]}" x2="${d[0] - 1}" y2="${d[1] + 7}" stroke="#2a98ee" stroke-width="3.2" stroke-linecap="round"/>`).join("");
+    } else if (k === "snow") {
+      b = cloudAt(8, 12, 46, "g-cloud-dark", "cl-front") +
+        [[22, 44], [32, 50], [42, 44]].map((d, i) => `<circle class="flake" style="animation-delay:${(i * 0.7).toFixed(2)}s" cx="${d[0]}" cy="${d[1]}" r="2.7" fill="#fff" stroke="#8fb4dc" stroke-width="0.9"/>`).join("");
+    } else { // storm
+      b = cloudAt(8, 8, 46, "g-cloud-dark", "cl-front") +
+        `<polygon class="bolt" points="35,35 26,50 32,50 29,61 42,44 35,44 39,35" fill="#ffd23f" stroke="#ff9a1a" stroke-width="1" stroke-linejoin="round"/>`;
+    }
+    return `<svg class="wi${anim ? " anim" : ""}" viewBox="0 0 64 64" aria-hidden="true" focusable="false">${b}</svg>`;
   }
 
   // =====================================================================
@@ -617,7 +662,7 @@
       const pop = p.pop != null && p.pop >= 10 ? `<div class="pop">💧${p.pop}%</div>` : "";
       return `<div class="hour-card anim-slide" style="animation-delay:${Math.min(i * 0.04, 0.4)}s">
         <div class="time">${p.now ? t("Сейчас", "Now") : fmtHour(p.dt, off)}</div>
-        <div class="icon">${iconOf(p.code, p.isDay)}</div>
+        <div class="icon">${iconSvg(p.code, p.isDay)}</div>
         <div class="temp">${toTemp(p.temp)}${tempSym()}</div>${pop}</div>`;
     }).join("");
   }
@@ -630,7 +675,7 @@
       const pop = d.pop != null && d.pop >= 10 ? "💧" + Math.round(d.pop) + "%" : "";
       return `<div class="day-row anim-fade-up" style="animation-delay:${Math.min(0.1 + i * 0.04, 0.6)}s">
         <div class="day-name">${name}<span style="display:block;font-size:11px;opacity:0.65;font-weight:400">${dateStr}</span></div>
-        <div class="icon">${iconOf(d.code, true)}</div>
+        <div class="icon">${iconSvg(d.code, true)}</div>
         <div class="day-pop">${pop}</div>
         <div class="temps"><span class="max">${toTemp(d.max)}°</span> <span class="min">${toTemp(d.min)}°</span></div></div>`;
     }).join("");
@@ -740,7 +785,7 @@
           <button type="button" class="fav-star" data-act="fav" aria-label="${t("Избранное", "Favorite")}" aria-pressed="${isFav}">${isFav ? "★" : "☆"}</button>
         </div>
         <div class="date anim-fade-up delay-1">${fmtDateLine(nowSec, off)} · <span id="liveClock">${fmtHM(nowSec, off)}</span></div>
-        <div class="weather-icon-big anim-float anim-scale delay-1">${iconOf(cur.code, cur.isDay)}</div>
+        <div class="weather-icon-big anim-float anim-scale delay-1">${iconSvg(cur.code, cur.isDay, true)}</div>
         <div class="temp-main anim-temp delay-2">${toTemp(cur.temp)}<span>${tempSym()}</span></div>
         <div class="condition anim-fade-up delay-3">${describe(cur.code)}</div>
         <div class="feels anim-fade-up delay-4">${t("Ощущается как", "Feels like")} ${toTemp(cur.feels)}${tempSym()}</div>
@@ -971,6 +1016,11 @@
     stars.style.opacity = P.stars * (1 - cover);
     stars.style.animation = P.stars > 0.3 ? "twinkle 4s ease-in-out infinite alternate" : "none";
     sun.style.opacity = P.sun * (1 - cover * 0.85);
+    // чем плотнее облака, тем сильнее размытие и обесцвечивание: вместо жёлтого диска, просвечивающего зеленью сквозь синеву,
+    // получается бледное тёплое сияние за облаками
+    sun.style.filter = cover > 0.05
+      ? `blur(${(cover * 20).toFixed(1)}px) saturate(${(1 - cover * 0.8).toFixed(2)}) brightness(${(1 + cover * 0.35).toFixed(2)})`
+      : "none";
     horizon.style.opacity = P.hOp;
     horizon.style.background = P.hBg;
     document.documentElement.style.background = P.html;
@@ -1030,51 +1080,72 @@
     return { fog: 0.9, rain: 0.9, storm: 0.95, snow: 0.85 }[k];
   }
 
-  // Одно облако = набор мягких радиальных пятен: светлые «шапки» сверху, серая тень снизу
+  // Палитры облаков: светлые «шапки», средние тона для объёма и тёмное основание
+  const TONES = {
+    white: { lite: "255,255,255", mid: "234,240,249", shade: "172,188,210" },
+    grey:  { lite: "241,244,250", mid: "207,215,228", shade: "122,135,156" },
+    dark:  { lite: "178,186,200", mid: "121,131,149", shade: "50,58,74" }
+  };
+
+  // Одно облако = набор мягких радиальных пятен (сверху светлые, снизу тёмные)
   function cloudBackground(tone) {
-    const lite = tone === "white" ? "255,255,255" : tone === "grey" ? "228,233,240" : "158,166,180";
-    const shade = tone === "white" ? "176,190,210" : tone === "grey" ? "132,142,158" : "62,70,86";
+    const T = TONES[tone] || TONES.white;
     const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
     const blob = (rgb, a, w, h, x, y) => {
       x = clamp(x, w, 100 - w); y = clamp(y, h, 100 - h); // пятно целиком внутри блока → нет прямых краёв
       return `radial-gradient(ellipse ${w.toFixed(0)}% ${h.toFixed(0)}% at ${x.toFixed(0)}% ${y.toFixed(0)}%, rgba(${rgb},${a}) 0%, rgba(${rgb},${(a * 0.55).toFixed(2)}) 45%, rgba(${rgb},0) 100%)`;
     };
     const parts = [];
-    const tops = 8 + Math.floor(Math.random() * 3);
-    for (let i = 0; i < tops; i++) parts.push(blob(lite, 0.95, rnd(14, 24), rnd(18, 28), rnd(10, 90), rnd(30, 55)));
-    const bottoms = 4 + Math.floor(Math.random() * 2);
-    for (let i = 0; i < bottoms; i++) parts.push(blob(shade, 0.85, rnd(18, 28), rnd(16, 24), 14 + i * (72 / (bottoms - 1)) + rnd(-5, 5), rnd(60, 74)));
+    const tops = 6 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < tops; i++) parts.push(blob(T.lite, 0.96, rnd(13, 22), rnd(17, 26), rnd(12, 88), rnd(28, 48)));
+    const mids = 4 + Math.floor(Math.random() * 2);
+    for (let i = 0; i < mids; i++) parts.push(blob(T.mid, 0.9, rnd(18, 28), rnd(18, 26), rnd(10, 90), rnd(44, 60)));
+    const base = 4 + Math.floor(Math.random() * 2);
+    for (let i = 0; i < base; i++) parts.push(blob(T.shade, 0.85, rnd(18, 28), rnd(14, 22), 14 + i * (72 / (base - 1)) + rnd(-5, 5), rnd(62, 76)));
     return parts.join(",");
   }
+
+  // Три «глубины»: дальние облака мельче, размытее и медленнее, ближние крупнее, чётче и быстрее
+  const DEPTH = [
+    { share: 0.28, top: [0, 30],  w: 0.75, op: [0.5, 0.7],   blur: 3, speed: 1.7 },
+    { share: 0.44, top: [8, 48],  w: 1,    op: [0.85, 0.97], blur: 0, speed: 1 },
+    { share: 0.28, top: [22, 66], w: 1.2,  op: [0.92, 1],    blur: 0, speed: 0.75 }
+  ];
 
   function buildFx(code) {
     const box = $("cloudFx"); if (!box) return;
     box.innerHTML = "";
     const kind = kindOf(code);
-    let n = 0, tone = "white", dim = 0, fog = false, flash = false, wMin = 70, wMax = 110;
-    if (kind === "clouds") { if (code === 3) { n = 11; tone = "grey"; dim = 0.45; wMin = 110; wMax = 150; } else { n = 4; wMin = 60; wMax = 95; } }
+    let n = 0, tone = "white", dim = 0, fog = false, flash = false, vig = 0, wMin = 70, wMax = 110;
+    if (kind === "clouds") { if (code === 3) { n = 11; tone = "grey"; dim = 0.4; vig = 0.6; wMin = 110; wMax = 150; } else { n = 5; wMin = 60; wMax = 95; } }
     else if (kind === "clear" && code === 1) { n = 2; wMin = 55; wMax = 80; }
-    else if (kind === "rain") { n = 9; tone = "dark"; dim = 0.38; wMin = 100; wMax = 140; }
-    else if (kind === "storm") { n = 10; tone = "dark"; dim = 0.5; flash = true; wMin = 100; wMax = 145; }
-    else if (kind === "snow") { n = 6; tone = "grey"; dim = 0.22; wMin = 90; wMax = 125; }
+    else if (kind === "rain") { n = 11; tone = "dark"; dim = 0.42; vig = 0.9; wMin = 100; wMax = 140; }
+    else if (kind === "storm") { n = 12; tone = "dark"; dim = 0.52; vig = 1; flash = true; wMin = 100; wMax = 145; }
+    else if (kind === "snow") { n = 8; tone = "grey"; dim = 0.28; vig = 0.5; wMin = 90; wMax = 125; }
     else if (kind === "fog") { fog = true; dim = 0.2; }
 
     const frag = document.createDocumentFragment();
     const add = (cls, css) => { const el = document.createElement("div"); el.className = cls; el.style.cssText = css; frag.appendChild(el); return el; };
 
-    if (dim) add("fx-dim", `background:rgba(125,135,150,${dim})`);
+    if (dim) add("fx-dim", `background:rgba(92,106,128,${dim})`);
 
-    for (let i = 0; i < n; i++) {
-      const w = rnd(wMin, wMax);
-      const dur = rnd(110, 240) * (kind === "storm" || kind === "rain" ? 0.65 : 1); // в непогоду ветер сильнее
-      // равномерно «рассаживаем» облака по траектории отрицательной задержкой
-      const delay = -(dur * (i / n) + rnd(0, dur / n));
-      const top = n > 4 ? (i / n) * 58 + rnd(-4, 6) : rnd(2, 42);
-      add("cloud",
-        `--w:${w.toFixed(0)}vw;--x:${rnd(-40, 60).toFixed(0)}vw;top:${top.toFixed(1)}%;width:${w.toFixed(0)}vw;height:${(w * 0.46).toFixed(0)}vw;` +
-        `opacity:${(tone === "white" ? rnd(0.8, 0.97) : rnd(0.88, 1)).toFixed(2)};background:${cloudBackground(tone)};` +
-        `animation-duration:${dur.toFixed(0)}s;animation-delay:${delay.toFixed(0)}s`);
-    }
+    const windy = kind === "storm" || kind === "rain" ? 0.65 : 1; // в непогоду ветер сильнее
+    DEPTH.forEach(L => {
+      const cnt = n ? Math.max(1, Math.round(n * L.share)) : 0;
+      for (let j = 0; j < cnt; j++) {
+        const w = rnd(wMin, wMax) * L.w;
+        const dur = rnd(110, 240) * L.speed * windy;
+        const delay = -(dur * (j / cnt) + rnd(0, dur / cnt));
+        const top = L.top[0] + (j / cnt) * (L.top[1] - L.top[0]) + rnd(-3, 3);
+        add("cloud",
+          `--w:${w.toFixed(0)}vw;--x:${rnd(-40, 60).toFixed(0)}vw;top:${top.toFixed(1)}%;width:${w.toFixed(0)}vw;height:${(w * 0.46).toFixed(0)}vw;` +
+          `opacity:${rnd(L.op[0], L.op[1]).toFixed(2)};background:${cloudBackground(tone)};` +
+          (L.blur ? `filter:blur(${L.blur}px);` : "") +
+          `animation-duration:${dur.toFixed(0)}s;animation-delay:${delay.toFixed(0)}s`);
+      }
+    });
+
+    if (vig) add("fx-vignette", `opacity:${vig}`);
 
     if (fog) {
       add("fx-haze", "");

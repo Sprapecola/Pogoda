@@ -23,6 +23,16 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+  <!-- Градиенты для значков погоды (используются через url(#id)) -->
+  <svg width="0" height="0" style="position:absolute" aria-hidden="true" focusable="false">
+    <defs>
+      <radialGradient id="g-sun" cx="38%" cy="32%" r="75%"><stop offset="0" stop-color="#fff8c9"/><stop offset=".5" stop-color="#ffd54a"/><stop offset="1" stop-color="#ff9a1a"/></radialGradient>
+      <linearGradient id="g-cloud" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset="1" stop-color="#c3cfe2"/></linearGradient>
+      <linearGradient id="g-cloud-dark" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#c3cddd"/><stop offset="1" stop-color="#7a879d"/></linearGradient>
+      <radialGradient id="g-moon" cx="35%" cy="30%" r="80%"><stop offset="0" stop-color="#fffef2"/><stop offset="1" stop-color="#e3d9a3"/></radialGradient>
+    </defs>
+  </svg>
+
   <!-- Небо суток -->
   <div class="sky" id="sky"></div>
   <div class="stars" id="stars"></div>
