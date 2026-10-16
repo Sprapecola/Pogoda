@@ -4,7 +4,7 @@
   // =====================================================================
   //  Конфиг и хранилище
   // =====================================================================
-  const APP_VERSION = "6.5";
+  const APP_VERSION = "6.6";
   const DEFAULT_CITY = { name: "Урюпинск", lat: 50.8047, lon: 42.0138, country: "RU" };
 
   // Ключи настроек/избранного те же, что в старой версии — данные не потеряются
@@ -14,8 +14,8 @@
   const CACHE_PREFIX = "wx_cache_v6_";
   const RAIN_KEY = "wx_rain_notified";
   const CACHE_MAX_AGE = 3 * 24 * 3600 * 1000; // офлайн-копия живёт 3 суток
-  const MEM_FRESH_MS = 5 * 60 * 1000;         // не долбим API чаще раза в 5 минут
-  const STALE_MS = 15 * 60 * 1000;            // при возврате в приложение обновляем, если старше
+  const MEM_FRESH_MS = 90 * 1000;            // память: не долбим API чаще ~1.5 мин (кнопка ↻ всегда force)
+  const STALE_MS = 10 * 60 * 1000;           // при возврате в приложение обновляем, если старше
 
   const store = {
     get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
@@ -325,7 +325,7 @@
   }
 
   const WX = window.WX_CONFIG || {};
-  const HEDGE_MS = 4500; // Open-Meteo молчит дольше — параллельно спрашиваем запасной источник
+  const HEDGE_MS = 9000; // даём Open-Meteo больше времени; запасной OWM только если OM реально молчит
 
   // Лёгкий запрос: почасовые данные только на ближайшие ~2 суток (а не на все 16) — ответ примерно в 5 раз меньше.
   function omUrl(lat, lon, light) {
@@ -339,11 +339,15 @@
 
   async function fetchOpenMeteo(lat, lon) {
     let m;
-    try { m = await getJson(omUrl(lat, lon, true), 9000); }
+    try { m = await getJson(omUrl(lat, lon, true), 14000); }
     catch (e) {
-      // если сервер вдруг не принял «лёгкие» параметры (400) — повторяем прежним, проверенным запросом
-      if (e && e.code === "HTTP 400") m = await getJson(omUrl(lat, lon, false), 12000);
-      else throw e;
+      // 400 на «лёгких» параметрах → полный запрос; таймаут/сеть → ещё одна попытка
+      if (e && e.code === "HTTP 400") m = await getJson(omUrl(lat, lon, false), 16000);
+      else {
+        await sleep(800);
+        try { m = await getJson(omUrl(lat, lon, false), 16000); }
+        catch (e2) { throw e; }
+      }
     }
     if (!m || !m.current || !m.daily) throw fail("формат данных");
     let d;
@@ -468,6 +472,7 @@
 
   async function fetchWeather(lat, lon, force, onUpgrade) {
     const k = keyFor(lat, lon);
+    if (force) memCache.delete(k);
     const mem = memCache.get(k);
     if (!force && mem && Date.now() - mem.fetchedAt < MEM_FRESH_MS) return mem;
 
@@ -509,7 +514,7 @@
     if (res.src === "owm") {
       // Показываем запасные данные сразу, но Open-Meteo не бросаем: как только он ответит, картинка обновится до полной
       res.note = errors.filter(x => x.indexOf("Open-Meteo") === 0).join(" · ") ||
-        t("Open-Meteo не ответил за 4,5 с", "Open-Meteo did not answer in 4.5 s");
+        t("Open-Meteo не ответил вовремя", "Open-Meteo did not answer in time");
       if (onUpgrade) omPromise.then(d => { if (d) onUpgrade(d); }, () => {});
     }
     return res;
@@ -1217,17 +1222,18 @@
   function cloudBackground(tone) {
     const T = TONES[tone] || TONES.white;
     const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
+    // мягкие эллипсы с длинным затуханием — без резких краёв и «квадратов»
     const blob = (rgb, a, w, h, x, y) => {
-      x = clamp(x, w, 100 - w); y = clamp(y, h, 100 - h); // пятно целиком внутри блока → нет прямых краёв
-      return `radial-gradient(ellipse ${w.toFixed(0)}% ${h.toFixed(0)}% at ${x.toFixed(0)}% ${y.toFixed(0)}%, rgba(${rgb},${a}) 0%, rgba(${rgb},${(a * 0.55).toFixed(2)}) 45%, rgba(${rgb},0) 100%)`;
+      x = clamp(x, w * 0.6, 100 - w * 0.6); y = clamp(y, h * 0.5, 100 - h * 0.5);
+      return `radial-gradient(ellipse ${w.toFixed(0)}% ${h.toFixed(0)}% at ${x.toFixed(0)}% ${y.toFixed(0)}%, rgba(${rgb},${a}) 0%, rgba(${rgb},${(a * 0.4).toFixed(2)}) 38%, rgba(${rgb},0) 72%)`;
     };
     const parts = [];
-    const tops = 6 + Math.floor(Math.random() * 3);
-    for (let i = 0; i < tops; i++) parts.push(blob(T.lite, 0.96, rnd(13, 22), rnd(17, 26), rnd(12, 88), rnd(28, 48)));
-    const mids = 4 + Math.floor(Math.random() * 2);
-    for (let i = 0; i < mids; i++) parts.push(blob(T.mid, 0.9, rnd(18, 28), rnd(18, 26), rnd(10, 90), rnd(44, 60)));
-    const base = 4 + Math.floor(Math.random() * 2);
-    for (let i = 0; i < base; i++) parts.push(blob(T.shade, 0.85, rnd(18, 28), rnd(14, 22), 14 + i * (72 / (base - 1)) + rnd(-5, 5), rnd(62, 76)));
+    const tops = 5 + Math.floor(Math.random() * 2);
+    for (let i = 0; i < tops; i++) parts.push(blob(T.lite, 0.92, rnd(16, 26), rnd(20, 32), rnd(15, 85), rnd(26, 46)));
+    const mids = 3 + Math.floor(Math.random() * 2);
+    for (let i = 0; i < mids; i++) parts.push(blob(T.mid, 0.82, rnd(20, 32), rnd(20, 30), rnd(12, 88), rnd(42, 58)));
+    const base = 3;
+    for (let i = 0; i < base; i++) parts.push(blob(T.shade, 0.72, rnd(20, 30), rnd(16, 24), 18 + i * 28 + rnd(-6, 6), rnd(58, 72)));
     return parts.join(",");
   }
 
@@ -1296,7 +1302,7 @@
       ok = false;
       if (!canvas) return false;
       try {
-        gl = canvas.getContext("webgl", { alpha: true, premultipliedAlpha: true, antialias: false, depth: false, stencil: false, powerPreference: "low-power" });
+        gl = canvas.getContext("webgl", { alpha: true, premultipliedAlpha: true, antialias: true, depth: false, stencil: false, powerPreference: "default" });
         if (!gl) return false;
         const hp = gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER, gl.HIGH_FLOAT);
         if (!hp || hp.precision === 0) return false; // без highp шум даёт артефакты — лучше CSS-облака
@@ -1328,9 +1334,10 @@
 
     let quality = 1;     // автоподстройка: на слабых телефонах разрешение снижается само
     function resize() {
-      // ≈860 px по высоте: достаточно для чётких облаков (раньше было 380 — отсюда «мыло»)
+      // Высокое внутреннее разрешение + CSS-сглаживание — без «квадратиков»
       const h = window.innerHeight || 800, w = window.innerWidth || 400;
-      const k = Math.min(1.15, 860 / h) * quality;
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      const k = Math.min(1.25, 1100 / h) * quality * dpr;
       const cw = Math.max(2, Math.round(w * k)), ch = Math.max(2, Math.round(h * k));
       if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
       gl.viewport(0, 0, cw, ch);
@@ -1356,8 +1363,9 @@
       // если кадры идут реже ~13/с, снижаем разрешение (не дольше, чем до 45%)
       if (prevT) {
         const dtm = now - prevT;
-        if (dtm > 75) slow++; else if (slow > 0) slow--;
-        if (slow > 12 && quality > 0.45) { quality = Math.max(0.45, quality * 0.8); slow = 0; resize(); }
+        if (dtm > 90) slow++; else if (slow > 0) slow--;
+        // не опускаем ниже 0.75 — иначе появляются пиксельные «квадраты» на фоне
+        if (slow > 18 && quality > 0.75) { quality = Math.max(0.75, quality * 0.9); slow = 0; resize(); }
       }
       prevT = now;
       if (now - last >= 40) { last = now; draw(now); } // ~25 кадров/с достаточно для медленных облаков
