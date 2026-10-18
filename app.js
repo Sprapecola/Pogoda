@@ -4,18 +4,17 @@
   // =====================================================================
   //  Конфиг и хранилище
   // =====================================================================
-  const APP_VERSION = "6.10";
-  const DEFAULT_CITY = { name: "Урюпинск", lat: 50.8047, lon: 42.0138, country: "RU" };
+  const APP_VERSION = (window.WX_CONFIG && window.WX_CONFIG.VERSION) || "0.0.0"; // номер версии задаётся в config.js
+  const DEFAULT_CITY = { name: "Урюпинск", lat: 50.8047, lon: 42.0138, country: "RU", tzName: "Europe/Volgograd" };
 
   // Ключи настроек/избранного те же, что в старой версии — данные не потеряются
   const SETTINGS_KEY = "weather_app_settings_v1";
   const FAV_KEY = "weather_app_favs_v1";
   const LAST_KEY = "wx_last_city_v1";
   const CACHE_PREFIX = "wx_cache_v6_";
-  const RAIN_KEY = "wx_rain_notified";
-  const CACHE_MAX_AGE = 3 * 24 * 3600 * 1000; // офлайн-копия живёт 3 суток
-  const MEM_FRESH_MS = 90 * 1000;            // память: не долбим API чаще ~1.5 мин (кнопка ↻ всегда force)
-  const STALE_MS = 10 * 60 * 1000;           // при возврате в приложение обновляем, если старше
+    const CACHE_MAX_AGE = 3 * 24 * 3600 * 1000; // офлайн-копия живёт 3 суток
+  const MEM_FRESH_MS = 5 * 60 * 1000;         // не долбим API чаще раза в 5 минут
+  const STALE_MS = 15 * 60 * 1000;            // при возврате в приложение обновляем, если старше
 
   const store = {
     get(k, d) { try { const v = localStorage.getItem(k); return v == null ? d : JSON.parse(v); } catch (e) { return d; } },
@@ -35,8 +34,7 @@
 
   const settings = Object.assign({
     theme: "auto", tempUnit: "C", windUnit: "kmh", pressUnit: "mm",
-    lang: (navigator.language || "ru").toLowerCase().indexOf("ru") === 0 ? "ru" : "en",
-    sound: "off"
+    lang: (navigator.language || "ru").toLowerCase().indexOf("ru") === 0 ? "ru" : "en"
   }, store.get(SETTINGS_KEY, {}));
   const saveSettings = () => store.set(SETTINGS_KEY, settings);
 
@@ -48,10 +46,11 @@
     city: null,
     data: null,
     seq: 0,            // защита от гонок: ответ старого запроса не затирает новый
-    hourStep: 3,
+    openDay: null,
     dayRange: 7,
     effectsKey: null,
     fxCode: undefined,
+    phase: "day",
     lastResults: []
   };
 
@@ -86,7 +85,7 @@
     0: "ясно", 1: "преимущественно ясно", 2: "переменная облачность", 3: "пасмурно",
     45: "туман", 48: "изморозь",
     51: "лёгкая морось", 53: "морось", 55: "сильная морось", 56: "лёгкая ледяная морось", 57: "ледяная морось",
-    61: "небольшой дождь", 63: "дождь", 65: "сильный дождь", 66: "ледяной дождь", 67: "сильный ледяной дождь",
+    61: "небольшой дождь", 63: "дождь", 65: "сильный дождь", 66: "ледяной дождь", 67: "сильный ледяной дождь", 68: "дождь со снегом", 69: "сильный дождь со снегом",
     71: "небольшой снег", 73: "снег", 75: "сильный снег", 77: "снежные зёрна",
     80: "небольшой ливень", 81: "ливень", 82: "сильный ливень", 85: "снегопад", 86: "сильный снегопад",
     95: "гроза", 96: "гроза с градом", 99: "сильная гроза с градом"
@@ -95,7 +94,7 @@
     0: "clear", 1: "mainly clear", 2: "partly cloudy", 3: "overcast",
     45: "fog", 48: "rime fog",
     51: "light drizzle", 53: "drizzle", 55: "heavy drizzle", 56: "light freezing drizzle", 57: "freezing drizzle",
-    61: "light rain", 63: "rain", 65: "heavy rain", 66: "freezing rain", 67: "heavy freezing rain",
+    61: "light rain", 63: "rain", 65: "heavy rain", 66: "freezing rain", 67: "heavy freezing rain", 68: "sleet", 69: "heavy sleet",
     71: "light snow", 73: "snow", 75: "heavy snow", 77: "snow grains",
     80: "light showers", 81: "showers", 82: "heavy showers", 85: "snow showers", 86: "heavy snow showers",
     95: "thunderstorm", 96: "thunderstorm with hail", 99: "severe thunderstorm with hail"
@@ -105,7 +104,7 @@
   function kindOf(code) {
     if (code >= 95) return "storm";
     if ((code >= 71 && code <= 77) || code === 85 || code === 86) return "snow";
-    if ((code >= 51 && code <= 67) || (code >= 80 && code <= 82)) return "rain";
+    if ((code >= 51 && code <= 69) || (code >= 80 && code <= 82)) return "rain";
     if (code === 45 || code === 48) return "fog";
     if (code === 0 || code === 1) return "clear";
     return "clouds";
@@ -153,7 +152,7 @@
       b = cloudAt(11, 8, 42, "g-cloud", "cl-front") +
         `<g stroke="#a3b5d0" stroke-width="3.8" stroke-linecap="round"><path class="fog-l" d="M12 42h40"/><path class="fog-l f2" d="M18 49h34"/><path class="fog-l f3" d="M12 56h28"/></g>`;
     } else if (k === "rain") {
-      const heavy = code === 65 || code === 82 || code === 67;
+      const heavy = code === 65 || code === 82 || code === 67 || code === 69;
       const sunBehind = isDay && (code === 51 || code === 53 || code === 61 || code === 80);
       const drops = heavy ? [[20, 42], [28, 46], [36, 42], [44, 46]] : [[22, 42], [32, 46], [42, 42]];
       b = (sunBehind ? sunAt(46, 17, 7) : "") + cloudAt(8, 12, 46, "g-cloud-dark", "cl-front") +
@@ -245,7 +244,7 @@
         if (e && e.code) throw e;
       } finally { clearTimeout(timer); }
     }
-    return xhrJson(url, Math.min(ms, 7000));
+    return xhrJson(url, Math.min(ms, 10000));
   }
 
   const keyFor = (lat, lon) => CACHE_PREFIX + Number(lat).toFixed(2) + "_" + Number(lon).toFixed(2);
@@ -287,6 +286,8 @@
         code: D.weather_code[i],
         pop: D.precipitation_probability_max ? D.precipitation_probability_max[i] : null,
         uv: D.uv_index_max ? D.uv_index_max[i] : null,
+        precip: D.precipitation_sum ? D.precipitation_sum[i] : null,
+        gust: D.wind_gusts_10m_max ? D.wind_gusts_10m_max[i] : null,
         sunrise: D.sunrise && D.sunrise[i] ? U(D.sunrise[i]) : null,
         sunset: D.sunset && D.sunset[i] ? U(D.sunset[i]) : null
       });
@@ -296,13 +297,15 @@
     const hourly = [];
     (H.time || []).forEach((s, i) => {
       const dt = U(s);
-      if (dt < nowSec - 3600 || hourly.length >= 50) return;
+      if (dt < nowSec - 3600 || hourly.length >= 130) return;
       hourly.push({
         dt,
         temp: H.temperature_2m[i],
         code: H.weather_code[i],
         isDay: H.is_day ? H.is_day[i] !== 0 : true,
-        pop: H.precipitation_probability ? H.precipitation_probability[i] : null
+        pop: H.precipitation_probability ? H.precipitation_probability[i] : null,
+        precip: H.precipitation ? H.precipitation[i] : null,
+        step: 1
       });
     });
 
@@ -315,6 +318,7 @@
         pressure: c.pressure_msl,           // давление, приведённое к уровню моря (как в прогнозах)
         windSpeed: c.wind_speed_10m,
         windDeg: c.wind_direction_10m,
+        gust: c.wind_gusts_10m != null ? c.wind_gusts_10m : null,
         visibility: c.visibility > 0 ? c.visibility : null,
         code: c.weather_code,
         isDay: c.is_day !== 0
@@ -325,29 +329,28 @@
   }
 
   const WX = window.WX_CONFIG || {};
-  const HEDGE_MS = 9000; // даём Open-Meteo больше времени; запасной OWM только если OM реально молчит
+  const HEDGE_MS = 4500; // Open-Meteo молчит дольше — параллельно спрашиваем запасной источник
 
-  // Лёгкий запрос: почасовые данные только на ближайшие ~2 суток (а не на все 16) — ответ примерно в 5 раз меньше.
-  function omUrl(lat, lon, light) {
-    return "https://api.open-meteo.com/v1/forecast?latitude=" + lat + "&longitude=" + lon +
+  // Лёгкий запрос: почасовые данные только на ближайшие 5 суток (а не на все 16) — ответ в несколько раз меньше.
+  const OM_HOST = "https://api.open-meteo.com";
+  // Запасной адрес: в Open-Meteo это тот же сервис под другим именем. Если основное имя у вас недоступно, а соседнее нет — выручит оно.
+  const OM_MIRROR = "https://air-quality-api.open-meteo.com";
+  function omUrl(lat, lon, light, host) {
+    return (host || OM_HOST) + "/v1/forecast?latitude=" + lat + "&longitude=" + lon +
       "&timezone=auto&wind_speed_unit=ms" +
-      "&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,weather_code,pressure_msl,wind_speed_10m,wind_direction_10m,visibility" +
-      "&hourly=temperature_2m,weather_code,is_day,precipitation_probability" +
-      "&daily=weather_code,temperature_2m_max,temperature_2m_min,uv_index_max,precipitation_probability_max,sunrise,sunset" +
-      "&past_days=1&forecast_days=16" + (light ? "&past_hours=1&forecast_hours=50" : "");
+      "&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,weather_code,pressure_msl,wind_speed_10m,wind_direction_10m,wind_gusts_10m,visibility" +
+      "&hourly=temperature_2m,weather_code,is_day,precipitation_probability,precipitation" +
+      "&daily=weather_code,temperature_2m_max,temperature_2m_min,uv_index_max,precipitation_probability_max,precipitation_sum,wind_gusts_10m_max,sunrise,sunset" +
+      "&past_days=1&forecast_days=16" + (light ? "&past_hours=1&forecast_hours=120" : "");
   }
 
-  async function fetchOpenMeteo(lat, lon) {
+  async function fetchOpenMeteo(lat, lon, host) {
     let m;
-    try { m = await getJson(omUrl(lat, lon, true), 14000); }
+    try { m = await getJson(omUrl(lat, lon, true, host), 15000); }
     catch (e) {
-      // 400 на «лёгких» параметрах → полный запрос; таймаут/сеть → ещё одна попытка
-      if (e && e.code === "HTTP 400") m = await getJson(omUrl(lat, lon, false), 16000);
-      else {
-        await sleep(800);
-        try { m = await getJson(omUrl(lat, lon, false), 16000); }
-        catch (e2) { throw e; }
-      }
+      // если сервер вдруг не принял «лёгкие» параметры (400) — повторяем прежним, проверенным запросом
+      if (e && e.code === "HTTP 400") m = await getJson(omUrl(lat, lon, false, host), 15000);
+      else throw e;
     }
     if (!m || !m.current || !m.daily) throw fail("формат данных");
     let d;
@@ -370,55 +373,13 @@
   }
   const SEVERITY = { clear: 0, clouds: 1, fog: 2, rain: 3, snow: 4, storm: 5 };
 
-  // Только дни (16) — лёгкий запрос, чтобы у OWM-режима тоже были 7/14 дней
-  async function fetchOmDailyOnly(lat, lon) {
-    const url = "https://api.open-meteo.com/v1/forecast?latitude=" + lat + "&longitude=" + lon +
-      "&timezone=auto&past_days=1&forecast_days=16" +
-      "&daily=weather_code,temperature_2m_max,temperature_2m_min,uv_index_max,precipitation_probability_max,sunrise,sunset";
-    const m = await getJson(url, 12000);
-    if (!m || !m.daily || !m.daily.time) throw fail("формат данных");
-    const off = m.utc_offset_seconds || 0;
-    const D = m.daily;
-    const nowSec = Math.floor(Date.now() / 1000);
-    const todayStr = new Date((nowSec + off) * 1000).toISOString().slice(0, 10);
-    const times = D.time || [];
-    let ti = times.findIndex(x => x >= todayStr);
-    if (ti < 0) ti = 0;
-    const U = s => {
-      // локальная дата-время Open-Meteo → unix
-      const t = Date.parse(String(s).length <= 10 ? s + "T12:00:00" : s);
-      if (!isFinite(t)) return null;
-      // s без зоны: интерпретируем как UTC и вычитаем offset? parseForecast uses localToUnix
-      return Math.floor(t / 1000) - off;
-    };
-    // safer: reuse localToUnix if exists
-    const toUnix = typeof localToUnix === "function"
-      ? s => localToUnix(s, off)
-      : U;
-    const daily = [];
-    for (let i = ti; i < times.length; i++) {
-      daily.push({
-        date: times[i],
-        max: D.temperature_2m_max[i],
-        min: D.temperature_2m_min[i],
-        code: D.weather_code[i],
-        pop: D.precipitation_probability_max ? D.precipitation_probability_max[i] : null,
-        uv: D.uv_index_max ? D.uv_index_max[i] : null,
-        sunrise: D.sunrise && D.sunrise[i] ? toUnix(D.sunrise[i]) : null,
-        sunset: D.sunset && D.sunset[i] ? toUnix(D.sunset[i]) : null
-      });
-    }
-    return { daily, yesterday: ti > 0 ? { max: D.temperature_2m_max[ti - 1], min: D.temperature_2m_min[ti - 1] } : null, tz: off };
-  }
-
   async function fetchOwm(lat, lon) {
     const key = WX.OWM_KEY;
     if (!key) throw fail("нет ключа");
     const q = "?lat=" + lat + "&lon=" + lon + "&appid=" + key + "&units=metric";
-    const [cur, fc, omDays] = await Promise.all([
+    const [cur, fc] = await Promise.all([
       getJson("https://api.openweathermap.org/data/2.5/weather" + q, 8000),
-      getJson("https://api.openweathermap.org/data/2.5/forecast" + q, 8000).catch(() => null),
-      fetchOmDailyOnly(lat, lon).catch(() => null)
+      getJson("https://api.openweathermap.org/data/2.5/forecast" + q, 8000).catch(() => null)
     ]);
     if (!cur || !cur.main) throw fail("формат данных");
 
@@ -435,12 +396,13 @@
     const code = owmToWmo(w0.id);
 
     const list = ((fc && fc.list) || []).slice().sort((a, b) => a.dt - b.dt);
+    const owmVol = it => ((it.rain && it.rain["3h"]) || 0) + ((it.snow && it.snow["3h"]) || 0);
 
     // Почасовой ряд: прогноз OWM шагом 3 ч → линейная интерполяция до 1 часа
     const hourly = [];
     if (list.length) {
       let t0 = Math.floor(now / 3600) * 3600 - 3600;
-      for (let tt = t0; tt <= t0 + 50 * 3600; tt += 3600) {
+      for (let tt = t0; tt <= t0 + 120 * 3600; tt += 3600) {
         let a = null, b = null;
         for (let i = 0; i < list.length; i++) { if (list[i].dt <= tt) a = list[i]; else { b = list[i]; break; } }
         if (!a && !b) break;
@@ -453,7 +415,9 @@
           temp: a.main.temp + (b.main.temp - a.main.temp) * f,
           code: owmToWmo(((near.weather || [])[0] || {}).id),
           isDay: isDayAt(tt),
-          pop: Math.round(((a.pop || 0)) * 100)
+          pop: Math.round(((a.pop || 0)) * 100),
+          precip: owmVol(b) / 3,   // объём в записи OWM — за 3 часа, заканчивающиеся в её момент
+          step: 1
         });
       }
     }
@@ -462,17 +426,19 @@
     const byDay = {};
     const dayKey = ts => new Date((ts + tz) * 1000).toISOString().slice(0, 10);
     const todayKey = dayKey(now);
-    byDay[todayKey] = { temps: [cur.main.temp], codes: [], pop: 0 };
+    byDay[todayKey] = { temps: [cur.main.temp], codes: [], pop: 0, precip: 0, gust: 0 };
     list.forEach(it => {
       const k = dayKey(it.dt);
-      const d = byDay[k] || (byDay[k] = { temps: [], codes: [], pop: 0 });
+      const d = byDay[k] || (byDay[k] = { temps: [], codes: [], pop: 0, precip: 0, gust: 0 });
       d.temps.push(it.main.temp_max != null ? it.main.temp_max : it.main.temp, it.main.temp_min != null ? it.main.temp_min : it.main.temp);
       const hh = new Date((it.dt + tz) * 1000).getUTCHours();
       if (hh >= 6 && hh <= 21) d.codes.push(owmToWmo(((it.weather || [])[0] || {}).id));
       d.pop = Math.max(d.pop, Math.round((it.pop || 0) * 100));
+      d.precip += owmVol(it);
+      d.gust = Math.max(d.gust, (it.wind && it.wind.gust) || 0);
     });
     const keys = Object.keys(byDay).filter(k => k >= todayKey).sort();
-    let daily = keys.map((k, i) => {
+    const daily = keys.map((k, i) => {
       const d = byDay[k];
       // типичная погода дня: самый частый код, при равенстве — тяжелее
       const cnt = {};
@@ -487,17 +453,10 @@
       });
       return {
         date: k, max: Math.max.apply(null, d.temps), min: Math.min.apply(null, d.temps), code: best, pop: d.pop, uv: null,
+        precip: Math.round(d.precip * 10) / 10, gust: d.gust || null,
         sunrise: sr ? sr + i * DAY : null, sunset: ss ? ss + i * DAY : null
       };
     });
-
-    // 7/14 дней: если Open-Meteo отдал 16 дней — берём их (OWM даёт только ~5)
-    let yesterday = null;
-    if (omDays && omDays.daily && omDays.daily.length >= 7) {
-      daily = omDays.daily;
-      yesterday = omDays.yesterday;
-      if (omDays.tz) { /* keep OWM tz for current clock; days use their own sunrise */ }
-    }
 
     return {
       v: 6, src: "owm", lat: Number(lat), lon: Number(lon), tz, fetchedAt: Date.now(),
@@ -505,72 +464,239 @@
         temp: cur.main.temp, feels: cur.main.feels_like, humidity: cur.main.humidity,
         pressure: cur.main.sea_level || cur.main.pressure,
         windSpeed: (cur.wind && cur.wind.speed) || 0, windDeg: cur.wind ? cur.wind.deg : null,
+        gust: cur.wind && cur.wind.gust != null ? cur.wind.gust : null,
         visibility: cur.visibility > 0 ? cur.visibility : null,
         code, isDay: isDayAt(now)
       },
-      hourly, daily, yesterday, air: null, pollen: null
+      hourly, daily, yesterday: null, air: null, pollen: null
     };
   }
 
-  // Первый УСПЕШНЫЙ ответ из набора (ошибка — только если не удалось ничего)
-  function firstOk(list) {
-    return new Promise((resolve, reject) => {
-      let left = list.length, last = null;
-      list.forEach(p => Promise.resolve(p).then(resolve, e => { last = e; if (--left === 0) reject(last); }));
-    });
+  // ---- Запасной источник №2: MET Norway (api.met.no), без ключа, прогноз до ~9 дней ----
+  // Из браузера его вызывать можно: вместо User-Agent сервер использует заголовок Origin сайта.
+  function metToWmo(sym) {
+    const b = String(sym).replace(/_(day|night|polartwilight)$/, "");
+    if (b.indexOf("thunder") >= 0) return 95;
+    if (b === "clearsky") return 0;
+    if (b === "fair") return 1;
+    if (b === "partlycloudy") return 2;
+    if (b === "cloudy") return 3;
+    if (b === "fog") return 45;
+    const heavy = b.indexOf("heavy") === 0, light = b.indexOf("light") === 0;
+    if (b.indexOf("sleet") >= 0) return heavy ? 69 : 68;                 // дождь со снегом
+    if (b.indexOf("snowshowers") >= 0) return heavy ? 86 : 85;
+    if (b.indexOf("snow") >= 0) return heavy ? 75 : light ? 71 : 73;
+    if (b.indexOf("rainshowers") >= 0) return heavy ? 82 : light ? 80 : 81;
+    if (b.indexOf("rain") >= 0) return heavy ? 65 : light ? 61 : 63;
+    return 3;
   }
 
-  async function fetchWeather(lat, lon, force, onUpgrade) {
+  // Восход/закат по формуле «sunrise equation» (у MET их нет). dateKey — местная дата "YYYY-MM-DD".
+  function sunTimes(lat, lon, dateKey, tz) {
+    const rad = Math.PI / 180;
+    const noonUtc = Date.parse(dateKey + "T12:00:00Z") / 1000 - tz;
+    const jd = noonUtc / 86400 + 2440587.5;
+    const n = Math.ceil(jd - 2451545.0 + 0.0008);
+    const Js = n - lon / 360;
+    const M = (((357.5291 + 0.98560028 * Js) % 360) + 360) % 360, Mr = M * rad;
+    const C = 1.9148 * Math.sin(Mr) + 0.02 * Math.sin(2 * Mr) + 0.0003 * Math.sin(3 * Mr);
+    const lam = ((((M + C + 180 + 102.9372) % 360) + 360) % 360) * rad;
+    const Jt = 2451545.0 + Js + 0.0053 * Math.sin(Mr) - 0.0069 * Math.sin(2 * lam);
+    const dec = Math.asin(Math.sin(lam) * Math.sin(23.4397 * rad));
+    const cosw = (Math.sin(-0.833 * rad) - Math.sin(lat * rad) * Math.sin(dec)) / (Math.cos(lat * rad) * Math.cos(dec));
+    if (cosw > 1 || cosw < -1) return null; // полярный день или ночь
+    const w0 = Math.acos(cosw) / rad;
+    const toUnix = j => Math.round((j - 2440587.5) * 86400);
+    return { sunrise: toUnix(Jt - w0 / 360), sunset: toUnix(Jt + w0 / 360) };
+  }
+
+  // «Ощущается как»: охлаждение ветром (холодно) и индекс жары (жарко); у MET своей величины нет
+  function apparentTemp(T, ws, rh) {
+    const v = ws * 3.6;
+    if (T <= 10 && v > 4.8) { const p = Math.pow(v, 0.16); return 13.12 + 0.6215 * T - 11.37 * p + 0.3965 * T * p; }
+    if (T >= 27 && rh >= 40) {
+      const F = T * 9 / 5 + 32;
+      const hi = -42.379 + 2.04901523 * F + 10.14333127 * rh - 0.22475541 * F * rh - 0.00683783 * F * F - 0.05481717 * rh * rh +
+        0.00122874 * F * F * rh + 0.00085282 * F * rh * rh - 0.00000199 * F * F * rh * rh;
+      return (hi - 32) * 5 / 9;
+    }
+    return T;
+  }
+
+  // Часовой пояс города для источников, которые отдают только UTC: сохранённый → по названию пояса → по долготе
+  function tzOffsetFromName(name) {
+    try {
+      const part = new Intl.DateTimeFormat("en-US", { timeZone: name, timeZoneName: "longOffset" })
+        .formatToParts(new Date()).find(x => x.type === "timeZoneName");
+      const m = part && /GMT([+-])(\d{1,2})(?::(\d{2}))?/.exec(part.value);
+      if (!m) return part ? 0 : null;
+      return (m[1] === "-" ? -1 : 1) * (Number(m[2]) * 3600 + Number(m[3] || 0) * 60);
+    } catch (e) { return null; }
+  }
+  function tzFor(lat, lon, hint) {
+    const c = readCache(lat, lon);
+    if (c && typeof c.tz === "number") return c.tz;
+    if (hint && typeof hint.tz === "number") return hint.tz;
+    if (hint && hint.tzName) { const o = tzOffsetFromName(hint.tzName); if (o != null) return o; }
+    return Math.round(lon / 15) * 3600;
+  }
+
+  // типичная погода дня: самый частый код; при равенстве — тяжелее, но грозу одна запись не делает
+  function dayCode(codes, fallback) {
+    const cnt = {};
+    codes.forEach(c => { cnt[c] = (cnt[c] || 0) + 1; });
+    let best = fallback, bestN = -1;
+    Object.keys(cnt).forEach(c => {
+      const n = cnt[c];
+      const sev = Math.min(SEVERITY[kindOf(Number(c))], n >= 2 ? 5 : 3);
+      const bestSev = Math.min(SEVERITY[kindOf(best)], bestN >= 2 ? 5 : 3);
+      if (n > bestN || (n === bestN && sev > bestSev)) { best = Number(c); bestN = n; }
+    });
+    return best;
+  }
+
+  async function fetchMet(lat, lon, hint) {
+    const j = await getJson("https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=" + Number(lat).toFixed(4) + "&lon=" + Number(lon).toFixed(4), 10000);
+    const ts = j && j.properties && j.properties.timeseries;
+    if (!ts || ts.length < 4) throw fail("формат данных");
+    const tz = tzFor(lat, lon, hint);
+    const now = Math.floor(Date.now() / 1000);
+    const dayKey = x => new Date((x + tz) * 1000).toISOString().slice(0, 10);
+    const sunCache = {};
+    const sunOf = key => (key in sunCache ? sunCache[key] : (sunCache[key] = sunTimes(Number(lat), Number(lon), key, tz)));
+    const isDayAt = (x, sym) => {
+      if (/_day$/.test(sym)) return true;
+      if (/_night$/.test(sym)) return false;
+      const sn = sunOf(dayKey(x));
+      return sn ? x >= sn.sunrise && x <= sn.sunset : true;
+    };
+
+    const rows = [];
+    ts.forEach(x => {
+      const det = x.data && x.data.instant && x.data.instant.details;
+      if (!det || det.air_temperature == null) return;
+      const n1 = x.data.next_1_hours, src = n1 || x.data.next_6_hours || x.data.next_12_hours;
+      const sym = src && src.summary ? src.summary.symbol_code : "cloudy";
+      const dt = Math.floor(Date.parse(x.time) / 1000);
+      const n6 = x.data.next_6_hours;
+      rows.push({ dt, hourly: !!n1, temp: det.air_temperature, hum: det.relative_humidity, press: det.air_pressure_at_sea_level,
+        ws: det.wind_speed || 0, wd: det.wind_from_direction, code: metToWmo(sym), isDay: isDayAt(dt, sym),
+        pr1: n1 && n1.details ? n1.details.precipitation_amount : null,
+        pr6: n6 && n6.details ? n6.details.precipitation_amount : null });
+    });
+    if (rows.length < 4) throw fail("формат данных");
+    // дальше первых ~2,5 суток MET даёт записи с шагом 3–6 часов; осадки за период делим на его длину
+    rows.forEach((r, i) => {
+      const nx = rows[i + 1];
+      r.step = nx ? Math.max(1, Math.round((nx.dt - r.dt) / 3600)) : 1;
+      r.precip = r.pr1 != null ? r.pr1 : (r.pr6 != null ? r.pr6 * Math.min(r.step, 6) / 6 : null);
+    });
+
+    const cur = rows.filter(r => r.dt <= now + 1800).pop() || rows[0];
+    const hourly = rows.filter(r => r.dt >= now - 3600).slice(0, 130)
+      .map(r => ({ dt: r.dt, temp: r.temp, code: r.code, isDay: r.isDay, pop: null, precip: r.precip, step: r.step }));
+
+    const byDay = {};
+    rows.forEach(r => { const k = dayKey(r.dt); (byDay[k] || (byDay[k] = [])).push(r); });
+    const todayKey = dayKey(now);
+    const daily = Object.keys(byDay).filter(k => k >= todayKey).sort().map(k => {
+      const list = byDay[k];
+      const temps = list.map(r => r.temp);
+      const noon = list.filter(r => { const h = new Date((r.dt + tz) * 1000).getUTCHours(); return h >= 6 && h <= 21; }).map(r => r.code);
+      const sn = sunOf(k);
+      return { date: k, max: Math.max.apply(null, temps), min: Math.min.apply(null, temps),
+        code: dayCode(noon, k === todayKey ? cur.code : list[0].code), pop: null, uv: null,
+        precip: Math.round(list.reduce((a, r) => a + (r.precip || 0), 0) * 10) / 10, gust: null,
+        sunrise: sn ? sn.sunrise : null, sunset: sn ? sn.sunset : null };
+    });
+    if (!daily.length) throw fail("формат данных");
+
+    return {
+      v: 6, src: "met", lat: Number(lat), lon: Number(lon), tz, fetchedAt: Date.now(),
+      current: { temp: cur.temp, feels: apparentTemp(cur.temp, cur.ws, cur.hum || 50), humidity: cur.hum, pressure: cur.press,
+        windSpeed: cur.ws, windDeg: cur.wd, gust: null, visibility: null, code: cur.code, isDay: cur.isDay },
+      hourly, daily, yesterday: null, air: null, pollen: null
+    };
+  }
+
+  // Данные от всех источников: показываем ПЕРВЫЙ полученный, а когда приходит более полный — заменяем
+  // (Open-Meteo: 16 дней, УФ → MET Norway: ~9 дней → OpenWeatherMap: 5 дней)
+  const SRC_RANK = { om: 3, met: 2, owm: 1 };
+  const SRC_NAME = { om: "Open-Meteo", met: "MET Norway", owm: "OpenWeatherMap" };
+  const OMFAIL_KEY = "wx_om_fail";
+  const recentOmFail = () => Date.now() - store.get(OMFAIL_KEY, 0) < 20 * 60 * 1000;
+  const noteText = d => t("Основной источник недоступен: ", "Primary source unavailable: ") + d.note;
+
+  async function fetchWeather(lat, lon, force, cb) {
+    cb = cb || {};
     const k = keyFor(lat, lon);
-    if (force) memCache.delete(k);
     const mem = memCache.get(k);
     if (!force && mem && Date.now() - mem.fetchedAt < MEM_FRESH_MS) return mem;
 
-    // navigator.onLine намеренно НЕ используем: на Android (особенно с VPN) он бывает false при рабочей сети.
-    const errors = [];
-    let hedgeOver = false, owPromise = null;
-    const startOw = () => {
-      if (!owPromise) {
-        owPromise = fetchOwm(lat, lon).catch(e => { errors.push("OpenWeatherMap: " + reasonOf(e)); throw e; });
-        owPromise.catch(() => {}); // чтобы не было «unhandled rejection», если результат уже не нужен
-      }
-      return owPromise;
-    };
+    return new Promise((resolve, reject) => {
+      const errors = [];
+      let best = null, settled = false, active = 0, omDone = false, fbStarted = false, hedgeTimer = null, omLast = "";
 
-    // Open-Meteo: попытка → при сбое сразу будим запасной источник и ещё раз пробуем основной
-    const omPromise = (async () => {
-      try { return await fetchOpenMeteo(lat, lon); }
-      catch (e1) {
-        errors.push("Open-Meteo: " + reasonOf(e1));
-        startOw();
-        await sleep(1200);
-        return await fetchOpenMeteo(lat, lon);
-      }
-    })();
-    omPromise.catch(() => {});
-    const hedge = sleep(HEDGE_MS).then(() => (hedgeOver ? new Promise(() => {}) : startOw()));
+      const omNote = () => (omLast ? "Open-Meteo: " + omLast : t("Open-Meteo пока не ответил", "Open-Meteo has not answered yet"));
+      const check = () => {
+        if (settled || best) return;
+        if (omDone && fbStarted && active === 0) {
+          settled = true;
+          const err = new Error("all providers failed");
+          err.details = errors.join(" · ");
+          reject(err);
+        }
+      };
+      const deliver = d => {
+        if (best && SRC_RANK[d.src] <= SRC_RANK[best.src]) return;
+        best = d;
+        if (d.src === "om") { clearTimeout(hedgeTimer); fbStarted = true; } // главный источник ответил — запасные не нужны
+        if (d.src !== "om") d.note = omNote();
+        if (!settled) { settled = true; resolve(d); }
+        else if (cb.upgrade) cb.upgrade(d);
+      };
+      const track = (name, fn) => {
+        active++;
+        fn().then(deliver, e => { errors.push(name + ": " + reasonOf(e)); })
+          .then(() => { active--; check(); });
+      };
+      const startFallbacks = () => {
+        if (fbStarted) return;
+        fbStarted = true;
+        clearTimeout(hedgeTimer);
+        track("Open-Meteo (зеркало)", () => fetchOpenMeteo(lat, lon, OM_MIRROR));
+        track("MET Norway", () => fetchMet(lat, lon, cb.hint));
+        if (WX.OWM_KEY) track("OpenWeatherMap", () => fetchOwm(lat, lon));
+        check();
+      };
 
-    let res;
-    try {
-      res = await firstOk([omPromise, hedge, omPromise.catch(() => startOw())]);
-    } catch (e) {
-      hedgeOver = true;
-      const err = new Error("all providers failed");
-      err.details = errors.join(" · ");
-      throw err;
-    }
-    hedgeOver = true;
+      // Open-Meteo: попытка → при сбое сразу будим запасные источники и ещё раз пробуем основной
+      active++;
+      (async () => {
+        try { return await fetchOpenMeteo(lat, lon); }
+        catch (e1) {
+          omLast = reasonOf(e1);
+          startFallbacks();
+          if (recentOmFail()) throw e1;   // уже подводил недавно — второй попыткой не нагружаем
+          await sleep(1200);
+          return await fetchOpenMeteo(lat, lon);
+        }
+      })().then(d => {
+        store.del(OMFAIL_KEY);
+        deliver(d);
+      }, e => {
+        omLast = reasonOf(e);
+        errors.push("Open-Meteo: " + omLast);
+        store.set(OMFAIL_KEY, Date.now());
+        // запасные данные уже на экране — обновим подпись, почему основной источник не подошёл
+        if (best && best.src !== "om") { best.note = omNote(); if (cb.note) cb.note(best); }
+      }).then(() => { omDone = true; active--; check(); });
 
-    if (res.src === "owm") {
-      // Показываем запасные данные сразу, но Open-Meteo не бросаем: как только он ответит, картинка обновится до полной
-      res.note = errors.filter(x => x.indexOf("Open-Meteo") === 0).join(" · ") ||
-        t("Open-Meteo не ответил вовремя", "Open-Meteo did not answer in time");
-      if (onUpgrade) omPromise.then(d => { if (d) onUpgrade(d); }, () => {});
-    }
-    return res;
+      // Если Open-Meteo недавно уже подводил, не ждём его 4,5 с — запасные источники стартуют почти сразу
+      hedgeTimer = setTimeout(startFallbacks, recentOmFail() ? 700 : HEDGE_MS);
+    });
   }
 
-  // Воздух и пыльца: Open-Meteo, а если не ответил — AQI из OpenWeatherMap
   // Воздух, УФ и пыльца — один запрос к API качества воздуха Open-Meteo. УФ берём отсюда, потому что
   // у запасного источника (OpenWeatherMap) его нет. Если сервер не примет расширенные параметры (400) — минимальный запрос.
   function parseAir(r) {
@@ -628,21 +754,37 @@
 
   const setSlot = (el, html) => { if (el && el.__html !== html) { el.innerHTML = html; el.__html = html; } };
 
+  function carryExtras(to, from) {
+    to.air = from.air; to.pollen = from.pollen; to.uvx = from.uvx; to.kp = from.kp; to.kpAt = from.kpAt;
+  }
+
   async function loadExtras(data, seq) {
-    // свежие данные (младше 10 минут) не перезапрашиваем — не нагружаем API
-    if (data.air && data.extrasAt && Date.now() - data.extrasAt < 10 * 60 * 1000) return;
-    try {
-      const x = await fetchAir(data.lat, data.lon);
-      if (seq !== state.seq || state.data !== data) return; // пользователь уже ушёл в другой город
-      data.air = x.air;
-      data.pollen = x.pollen;
-      data.uvx = x.uvx;
-      data.extrasAt = Date.now();
-      writeCache(data);
-      setSlot($("aqiSlot"), aqiInner(data));
-      setSlot($("pollenSlot"), pollenCard(data));
-      setSlot($("uvCard"), uvCard(data));
-    } catch (e) { /* не критично */ }
+    // воздух/УФ/пыльца: свежие данные (младше 10 минут) не перезапрашиваем — не нагружаем API
+    if (!(data.air && data.extrasAt && Date.now() - data.extrasAt < 10 * 60 * 1000)) {
+      try {
+        const x = await fetchAir(data.lat, data.lon);
+        if (seq !== state.seq || state.data !== data) return; // пользователь уже ушёл в другой город
+        data.air = x.air;
+        data.pollen = x.pollen;
+        data.uvx = x.uvx;
+        data.extrasAt = Date.now();
+        writeCache(data);
+        setSlot($("aqiSlot"), aqiInner(data));
+        setSlot($("pollenSlot"), pollenCard(data));
+        setSlot($("uvCard"), uvCard(data));
+        setSlot($("alertsSlot"), alertsHtml(data));
+      } catch (e) { /* не критично */ }
+    }
+    // магнитное поле: отдельно, чтобы его недоступность ничего не ломала
+    if (!data.kp || Date.now() - (data.kpAt || 0) > 30 * 60 * 1000) {
+      try {
+        const k = await fetchKp();
+        if (seq !== state.seq || state.data !== data) return;
+        data.kp = k; data.kpAt = Date.now();
+        writeCache(data);
+        setSlot($("kpSlot"), kpCard(data));
+      } catch (e) { /* NOAA недоступен — карточка просто не появится */ }
+    }
   }
 
   // =====================================================================
@@ -712,19 +854,6 @@
     return s;
   }
 
-  function moonPhase(nowSec) {
-    const SYN = 29.530588853;
-    const ref = Date.UTC(2000, 0, 6, 18, 14) / 86400000; // известное новолуние
-    let ph = ((nowSec / 86400 - ref) / SYN) % 1;
-    if (ph < 0) ph += 1;
-    const idx = Math.floor(ph * 8 + 0.5) % 8;
-    const names = settings.lang === "en"
-      ? ["New Moon", "Waxing Crescent", "First Quarter", "Waxing Gibbous", "Full Moon", "Waning Gibbous", "Last Quarter", "Waning Crescent"]
-      : ["Новолуние", "Растущий серп", "Первая четверть", "Растущая луна", "Полнолуние", "Убывающая луна", "Последняя четверть", "Убывающий серп"];
-    const icons = ["🌑", "🌒", "🌓", "🌔", "🌕", "🌖", "🌗", "🌘"];
-    return { name: names[idx], icon: icons[idx], illum: Math.round((1 - Math.cos(2 * Math.PI * ph)) / 2 * 100) };
-  }
-
   const POLLEN_COLORS = ["#94a3b8", "#2fd47a", "#f5c518", "#fb8c1a", "#ef4444"];
   const pollenLvl = v => (v < 1 ? 0 : v < 10 ? 1 : v < 50 ? 2 : v < 100 ? 3 : 4);
   const pollenName = l => (settings.lang === "en"
@@ -751,6 +880,137 @@
     return { top, items };
   }
 
+  // =====================================================================
+  //  Сводка осадков, предупреждения, подробности дня, магнитное поле
+  // =====================================================================
+  const fmtMm = v => (v < 10 ? String(Math.round(v * 10) / 10) : String(Math.round(v))) + " " + t("мм", "mm");
+  const isWet = h => { const k = kindOf(h.code); return k === "rain" || k === "snow" || k === "storm" || (h.precip || 0) >= 0.3; };
+  const wetKind = h => { const k = kindOf(h.code); return k === "storm" || k === "snow" ? k : "rain"; };
+  const WET_WORD = { rain: ["Дождь", "Rain"], snow: ["Снег", "Snow"], storm: ["Гроза", "Thunderstorm"] };
+  const WET_ICON = { rain: "🌧️", snow: "🌨️", storm: "⛈️" };
+  const wetWord = h => t(WET_WORD[wetKind(h)][0], WET_WORD[wetKind(h)][1]);
+  function whenText(ts, off, now) {
+    const a = shifted(ts, off), b = shifted(now, off);
+    const same = a.getUTCDate() === b.getUTCDate() && a.getUTCMonth() === b.getUTCMonth();
+    return (same ? "" : t("завтра в ", "tomorrow at ")) + fmtHM(ts, off);
+  }
+
+  // Одна строка под температурой: когда начнётся и закончится дождь (или «без осадков»)
+  function rainSummary(data) {
+    const now = Math.floor(Date.now() / 1000), off = data.tz, c = data.current;
+    const hrs = data.hourly.filter(h => h.dt > now && h.dt <= now + 24 * 3600);
+    if (hrs.length < 3) return null;
+    const nowH = { code: c.code, precip: null };
+    const mmOf = list => { const v = list.reduce((a, h) => a + (h.precip || 0), 0); return v >= 0.2 ? " · ~" + fmtMm(v) : ""; };
+    if (isWet(nowH)) {
+      const end = hrs.find(h => !isWet(h));
+      const word = wetWord(nowH);
+      const wetList = end ? hrs.filter(h => h.dt < end.dt) : hrs;
+      return { icon: WET_ICON[wetKind(nowH)], text: end
+        ? word + t(" закончится около ", " will stop around ") + whenText(end.dt, off, now) + mmOf(wetList)
+        : word + t(" продолжится ближайшие сутки", " will continue for the next 24 hours") + mmOf(wetList) };
+    }
+    const i = hrs.findIndex(isWet);
+    if (i < 0) return { icon: "🌤️", text: t("В ближайшие 24 часа без осадков", "No precipitation in the next 24 hours") };
+    const start = hrs[i], end = hrs.slice(i + 1).find(h => !isWet(h));
+    const wetList = hrs.slice(i, end ? hrs.indexOf(end) : hrs.length);
+    return { icon: WET_ICON[wetKind(start)], text: wetWord(start) + t(" начнётся около ", " starts around ") + whenText(start.dt, off, now) +
+      (end ? t(", закончится около ", ", ends around ") + whenText(end.dt, off, now) : t(", до конца суток", ", through the next 24 h")) + mmOf(wetList) };
+  }
+
+  // Предупреждения: считаются из уже загруженных данных (новых запросов нет), показываем до трёх самых важных
+  function alertsFor(data) {
+    const out = [];
+    const c = data.current, off = data.tz, now = Math.floor(Date.now() / 1000);
+    const today = data.daily[0] || {};
+    const win = data.hourly.filter(h => h.dt >= now - 1800 && h.dt <= now + 24 * 3600);
+    const hm = ts => fmtHM(ts, off);
+    const add = (lvl, icon, text) => out.push({ lvl, icon, text });
+
+    const storm = kindOf(c.code) === "storm" ? { dt: now } : win.find(h => h.dt <= now + 12 * 3600 && kindOf(h.code) === "storm");
+    if (storm) add(3, "⛈️", storm.dt <= now + 1800 ? t("Гроза", "Thunderstorm") : t("Возможна гроза около ", "Thunderstorm possible around ") + hm(storm.dt));
+
+    let peak = null;
+    win.forEach(h => { if ((h.precip || 0) > (peak ? peak.precip : 0)) peak = h; });
+    if (peak && peak.precip >= 4) add(peak.precip >= 8 ? 3 : 2, "🌧️", t("Сильные осадки: до ", "Heavy precipitation: up to ") + fmtMm(peak.precip) + t(" за час около ", " per hour around ") + hm(peak.dt));
+    const heavySnow = win.find(h => h.code === 75 || h.code === 86);
+    if (heavySnow) add(2, "❄️", t("Сильный снегопад около ", "Heavy snowfall around ") + hm(heavySnow.dt));
+
+    const gust = Math.max(c.gust || 0, c.windSpeed || 0, today.gust || 0);
+    if (gust >= 20) add(3, "💨", t("Очень сильный ветер: порывы до ", "Very strong wind: gusts up to ") + toWind(gust) + " " + windSym());
+    else if (gust >= 15) add(2, "💨", t("Сильный ветер: порывы до ", "Strong wind: gusts up to ") + toWind(gust) + " " + windSym());
+
+    if (today.max != null && today.max >= 35) add(3, "🥵", t("Сильная жара: до ", "Extreme heat: up to ") + toTemp(today.max) + tempSym());
+    else if (today.max != null && today.max >= 30) add(2, "🌡️", t("Жара: до ", "Heat: up to ") + toTemp(today.max) + tempSym());
+
+    const low = Math.min.apply(null, win.map(h => h.temp).concat([c.temp]));
+    if (low <= -25) add(3, "🥶", t("Сильный мороз: до ", "Severe frost: down to ") + toTemp(low) + tempSym());
+    else if (low <= -15) add(2, "🥶", t("Мороз: до ", "Frost: down to ") + toTemp(low) + tempSym());
+    else if (low <= 0 && c.temp > 1) add(1, "🧊", t("Ожидаются заморозки: до ", "Frost expected: down to ") + toTemp(low) + tempSym());
+
+    const uv = today.uv != null ? today.uv : (data.uvx ? data.uvx.max : null);
+    if (uv != null && uv >= 8) add(uv >= 11 ? 3 : 2, "☀️", t("Высокий УФ — нужен солнцезащитный крем", "High UV — use sunscreen"));
+    if (data.air && data.air.level >= 4) add(data.air.level >= 5 ? 3 : 2, "😷", t("Плохое качество воздуха", "Poor air quality"));
+
+    out.sort((a, b) => b.lvl - a.lvl);
+    return out.slice(0, 3);
+  }
+  function alertsHtml(data) {
+    const list = alertsFor(data);
+    if (!list.length) return "";
+    return `<div class="alerts">${list.map(a => `<div class="alert l${a.lvl}" role="alert"><span>${a.icon}</span><span>${esc(a.text)}</span></div>`).join("")}</div>`;
+  }
+
+  // Нажатие на день раскрывает его по часам (шаг 3 ч, а где данных меньше — как есть)
+  function dayDetail(data, d) {
+    const off = data.tz;
+    const dk = ts => new Date((ts + off) * 1000).toISOString().slice(0, 10);
+    let rows = data.hourly.filter(h => dk(h.dt) === d.date);
+    if (!rows.length) return `<div class="day-detail"><div class="day-note">${t("Почасовых данных на этот день нет", "No hourly data for this day")}</div></div>`;
+    if (rows.length > 12) rows = rows.filter(h => shifted(h.dt, off).getUTCHours() % 3 === 0);
+    const cards = rows.map(h => {
+      const rain = h.precip != null && h.precip >= 0.1 ? `<div class="pop">💧${fmtMm(h.precip)}</div>`
+        : (h.pop != null && h.pop >= 10 ? `<div class="pop">💧${h.pop}%</div>` : "");
+      return `<div class="hour-card mini"><div class="time">${fmtHour(h.dt, off)}</div><div class="icon">${iconSvg(h.code, h.isDay)}</div><div class="temp">${toTemp(h.temp)}${tempSym()}</div>${rain}</div>`;
+    }).join("");
+    const extra = (d.precip != null && d.precip >= 0.1 ? t("Осадки за день: ", "Precipitation for the day: ") + fmtMm(d.precip) : "") +
+      (d.gust ? (d.precip >= 0.1 ? " · " : "") + t("порывы до ", "gusts up to ") + toWind(d.gust) + " " + windSym() : "");
+    return `<div class="day-detail"><div class="hourly-scroll">${cards}</div>${extra ? `<div class="day-note">${extra}</div>` : ""}</div>`;
+  }
+
+  // Магнитные бури: индекс Kp (NOAA SWPC), шкала G1–G5. Если сервис недоступен — карточка просто не показывается.
+  const KP_LEVELS = [
+    [0, "#2fd47a", "Спокойно", "Quiet"], [4, "#f5c518", "Неспокойно", "Unsettled"],
+    [5, "#fb8c1a", "Магнитная буря G1 (слабая)", "Storm G1 (minor)"], [6, "#f97316", "Магнитная буря G2 (умеренная)", "Storm G2 (moderate)"],
+    [7, "#ef4444", "Магнитная буря G3 (сильная)", "Storm G3 (strong)"], [8, "#dc2626", "Магнитная буря G4 (жёсткая)", "Storm G4 (severe)"],
+    [9, "#9f1239", "Магнитная буря G5 (экстремальная)", "Storm G5 (extreme)"]
+  ];
+  const kpLevel = kp => { let l = KP_LEVELS[0]; KP_LEVELS.forEach(x => { if (kp >= x[0]) l = x; }); return l; };
+  async function fetchKp() {
+    const r = await getJson("https://services.swpc.noaa.gov/products/noaa-planetary-k-index.json", 8000);
+    const rows = Array.isArray(r) ? r : [];
+    for (let i = rows.length - 1; i >= 0; i--) {   // последняя строка с числом (первая может быть заголовком)
+      const x = rows[i];
+      const kp = Array.isArray(x) ? Number(x[1]) : Number(x && (x.Kp != null ? x.Kp : x.kp));
+      if (!isFinite(kp)) continue;
+      const ts = Array.isArray(x) ? x[0] : x && x.time_tag;
+      const ms = Date.parse(String(ts).replace(" ", "T").replace(/Z$/, "").replace(/\.\d+$/, "") + "Z"); // время в UTC
+      return { kp, at: isFinite(ms) ? Math.floor(ms / 1000) : null };
+    }
+    throw fail("формат данных");
+  }
+  function kpCard(data) {
+    const k = data.kp;
+    if (!k) return "";
+    const lv = kpLevel(k.kp), lg = settings.lang === "en" ? 3 : 2;
+    const cells = Array.from({ length: 9 }, (_, i) => `<i${i < Math.round(k.kp) ? ` style="background:${kpLevel(i + 1)[1]}"` : ""}></i>`).join("");
+    return `<div class="kp-card">
+      <div class="kp-head"><div class="kp-title">🧲 ${t("Магнитное поле", "Geomagnetic activity")}</div>${k.at ? `<div class="kp-when">${t("данные на ", "data for ")}${fmtHM(k.at, data.tz)}</div>` : ""}</div>
+      <div class="kp-row"><span class="lvl-dot" style="background:${lv[1]};color:${lv[1]}"></span><div class="kp-val">Kp ${Math.round(k.kp * 10) / 10}</div><div class="kp-text">${lv[lg]}</div></div>
+      <div class="kp-scale">${cells}</div>
+      <div class="kp-foot">NOAA SWPC</div></div>`;
+  }
+
   // Ряд для «по часам»: «сейчас» + каждые N часов из почасовых данных.
   // (раньше при шаге 3 показывались 8 подряд идущих ЧАСОВ, а не слотов через 3 часа)
   function hourlyPoints(data, step) {
@@ -763,7 +1023,8 @@
       const hasPop = win.some(x => x.pop != null);
       pts.push({
         dt: future[i].dt, temp: future[i].temp, code: future[i].code, isDay: future[i].isDay,
-        pop: hasPop ? Math.max.apply(null, win.map(x => x.pop || 0)) : null
+        pop: hasPop ? Math.max.apply(null, win.map(x => x.pop || 0)) : null,
+        precip: win.some(x => x.precip != null) ? win.reduce((a, x) => a + (x.precip || 0), 0) : null
       });
     }
     return pts;
@@ -774,8 +1035,9 @@
   // =====================================================================
   function hourCards(data) {
     const off = data.tz;
-    return hourlyPoints(data, state.hourStep).map((p, i) => {
-      const pop = p.pop != null && p.pop >= 10 ? `<div class="pop">💧${p.pop}%</div>` : "";
+    return hourlyPoints(data, 1).map((p, i) => {
+      const pop = p.precip != null && p.precip >= 0.1 ? `<div class="pop">💧${fmtMm(p.precip)}</div>`
+        : (p.pop != null && p.pop >= 10 ? `<div class="pop">💧${p.pop}%</div>` : "");
       return `<div class="hour-card anim-slide" style="animation-delay:${Math.min(i * 0.04, 0.4)}s">
         <div class="time">${p.now ? t("Сейчас", "Now") : fmtHour(p.dt, off)}</div>
         <div class="icon">${iconSvg(p.code, p.isDay)}</div>
@@ -784,23 +1046,27 @@
   }
 
   function dayRows(data) {
-    const list = (data && Array.isArray(data.daily)) ? data.daily : [];
-    if (!list.length) {
-      return `<div class="day-row" style="justify-content:center;opacity:.75">${t("Нет данных прогноза", "No forecast data")}</div>`;
-    }
-    return list.slice(0, state.dayRange).map((d, i) => {
-      const dd = new Date(String(d.date).slice(0, 10) + "T12:00:00Z");
+    const rows = data.daily.slice(0, state.dayRange).map((d, i) => {
+      const dd = new Date(d.date + "T12:00:00Z");
       const name = i === 0 ? t("Сегодня", "Today") : i === 1 ? t("Завтра", "Tomorrow") : dayName(dd.getUTCDay());
       const dateStr = dd.getUTCDate() + " " + monthName(dd.getUTCMonth());
+      const open = state.openDay === d.date;
       const pop = d.pop != null && d.pop >= 10 ? "💧" + Math.round(d.pop) + "%" : "";
-      const maxV = d.max != null && isFinite(d.max) ? toTemp(d.max) + "°" : "—";
-      const minV = d.min != null && isFinite(d.min) ? toTemp(d.min) + "°" : "—";
-      return `<div class="day-row anim-fade-up" style="animation-delay:${Math.min(0.1 + i * 0.04, 0.6)}s">
+      const mm = d.precip != null && d.precip >= 0.1 ? `<small>${fmtMm(d.precip)}</small>` : "";
+      return `<div class="day-row anim-fade-up${open ? " open" : ""}" data-day="${i}" role="button" tabindex="0" aria-expanded="${open}" style="animation-delay:${Math.min(0.1 + i * 0.04, 0.6)}s">
         <div class="day-name">${name}<span style="display:block;font-size:11px;opacity:0.65;font-weight:400">${dateStr}</span></div>
-        <div class="icon">${iconSvg(d.code != null ? d.code : 3, true)}</div>
-        <div class="day-pop">${pop}</div>
-        <div class="temps"><span class="max">${maxV}</span> <span class="min">${minV}</span></div></div>`;
+        <div class="icon">${iconSvg(d.code, true)}</div>
+        <div class="day-pop">${pop}${mm}</div>
+        <div class="temps"><span class="max">${toTemp(d.max)}°</span> <span class="min">${toTemp(d.min)}°</span></div>
+        <div class="chev">${open ? "▴" : "▾"}</div></div>${open ? dayDetail(data, d) : ""}`;
     }).join("");
+    // Если источник даёт меньше дней, чем выбрано, говорим об этом, а не молча показываем меньше
+    const have = data.daily.length;
+    const note = have < state.dayRange
+      ? `<div class="day-note">${t("Источник «", "Source “")}${SRC_NAME[data.src] || ""}${t("» даёт прогноз только на ", "” gives a forecast for only ")}${have}${t(" дн.", " days.")}` +
+        `${data.src !== "om" ? t(" Полный прогноз на 14 дней появится, когда ответит Open-Meteo.", " The full 14-day forecast will appear once Open-Meteo responds.") : ""}</div>`
+      : "";
+    return rows + note;
   }
 
   function chartSvg(data) {
@@ -874,7 +1140,7 @@
 
   function pollenCard(data) {
     const pol = pollenSummary(data.pollen);
-    if (!pol) return "";
+    if (!pol || pol.items.every(i => i.v === 0)) return "";   // вне сезона — без карточки
     const stamp = data.air && data.air.stamp ? `<div class="pollen-stamp">${t("данные на ", "data for ")}${data.air.stamp}</div>` : "";
     return `<div class="pollen-card">
       <div class="pollen-head"><div class="pollen-title">🌼 ${t("Пыльца", "Pollen")}</div>${stamp}</div>
@@ -907,6 +1173,7 @@
     const animate = opts.animate !== false;
     state.data = data;
     state.city = city;
+    if (city.tz !== data.tz) { city.tz = data.tz; store.set(LAST_KEY, city); }
 
     const cur = data.current, off = data.tz;
     const nowSec = Math.floor(Date.now() / 1000);
@@ -933,17 +1200,11 @@
         <div style="font-size:16px;font-weight:600">${shown > 0 ? "+" : ""}${shown}${tempSym()} ${shown > 0 ? t("теплее", "warmer") : shown < 0 ? t("холоднее", "colder") : t("как вчера", "same as yesterday")}</div></div>`;
     }
 
-    const notifBanner = ("Notification" in window && Notification.permission === "default")
-      ? `<div class="notif-banner"><span>${t("Включить уведомления о дожде?", "Enable rain alerts?")}</span><button type="button" data-act="notif">${t("Да", "Yes")}</button></div>`
-      : "";
-
-    const moon = moonPhase(nowSec);
-    const vis = cur.visibility != null
-      ? (cur.visibility >= 1000 ? Math.round(cur.visibility / 1000) : Math.round(cur.visibility / 100) / 10)
-      : null;
+    const sm = rainSummary(data);
+    const gustNow = Math.max(cur.gust || 0, today.gust || 0);
     const sunPct = sunProgressPct(today.sunrise, today.sunset);
     const sunIcon = sunPct != null && sunPct > 0 && sunPct < 100 ? "☀️" : "🌙";
-    const km = t("км", "km");
+    const shownDays = Math.min(state.dayRange, data.daily.length);
 
     content.classList.toggle("static", !animate);
     content.innerHTML = `
@@ -958,23 +1219,16 @@
         <div class="temp-main anim-temp delay-2">${toTemp(cur.temp)}<span>${tempSym()}</span></div>
         <div class="condition anim-fade-up delay-3">${describe(cur.code)}</div>
         <div class="feels anim-fade-up delay-4">${t("Ощущается как", "Feels like")} ${toTemp(cur.feels)}${tempSym()}</div>
+        ${sm ? `<div class="summary anim-fade-up delay-4"><span>${sm.icon}</span> ${esc(sm.text)}</div>` : ""}
       </div>
 
-      ${notifBanner}
+      <div id="alertsSlot">${alertsHtml(data)}</div>
+
       ${hist}
 
       <div class="wear-card anim-fade-up delay-2">
         <div class="wear-title">👔 ${t("Что надеть", "What to wear")}</div>
         <div class="wear-text">${wearText(cur.feels, kind, cur.windSpeed || 0)}</div>
-      </div>
-
-      <div class="moon-card anim-fade-up delay-2">
-        <div class="moon-title">${t("Луна", "Moon")}</div>
-        <div class="moon-row">
-          <div class="moon-emoji">${moon.icon}</div>
-          <div><div class="moon-name">${moon.name}</div>
-          <div class="moon-sub">${t("Освещённость", "Illumination")} ${moon.illum}%</div></div>
-        </div>
       </div>
 
       <div id="pollenSlot" class="anim-fade-up delay-2">${pollenCard(data)}</div>
@@ -988,12 +1242,16 @@
         <div class="detail-card"><div class="d-icon">💧</div><div class="d-label">${t("Влажность", "Humidity")}</div>
           <div class="d-value">${Math.round(cur.humidity)}%</div></div>
         <div class="detail-card"><div class="d-icon">💨</div><div class="d-label">${t("Ветер", "Wind")} ${windDir(cur.windDeg)}</div>
-          <div class="d-value">${toWind(cur.windSpeed || 0)} <span style="font-size:12px;font-weight:500">${windSym()}</span></div></div>
+          <div class="d-value">${toWind(cur.windSpeed || 0)} <span style="font-size:12px;font-weight:500">${windSym()}</span></div>
+          ${gustNow > (cur.windSpeed || 0) + 1 ? `<div class="d-sub">${t("порывы до ", "gusts ")}${toWind(gustNow)}</div>` : ""}</div>
         <div class="detail-card"><div class="d-icon">📉</div><div class="d-label">${t("Давление", "Pressure")}</div>
           <div class="d-value">${cur.pressure != null ? toPress(cur.pressure) : "—"}</div><div class="d-sub">${pressSym()}</div></div>
-        <div class="detail-card"><div class="d-icon">👁️</div><div class="d-label">${t("Видимость", "Visibility")}</div>
-          <div class="d-value">${vis == null ? "—" : vis + ' <span style="font-size:12px;font-weight:500">' + km + "</span>"}</div></div>
+        <div class="detail-card"><div class="d-icon">☔</div><div class="d-label">${t("Осадки сегодня", "Precipitation today")}</div>
+          <div class="d-value">${today.precip != null ? (today.precip < 10 ? Math.round(today.precip * 10) / 10 : Math.round(today.precip)) : "—"} <span style="font-size:12px;font-weight:500">${t("мм", "mm")}</span></div>
+          ${today.pop != null && today.pop >= 10 ? `<div class="d-sub">${t("вероятность ", "chance ")}${Math.round(today.pop)}%</div>` : ""}</div>
       </div>
+
+      <div id="kpSlot" class="anim-fade-up delay-3">${kpCard(data)}</div>
 
       <div class="chart-card anim-fade-up delay-3">
         <div style="font-size:13px;color:var(--muted);margin-bottom:8px">📈 ${t("Температура 24 ч", "Temperature 24h")}</div>
@@ -1019,22 +1277,20 @@
       </div>
 
       <div class="section-title anim-fade-up delay-3">🕒 ${t("По часам", "Hourly")}</div>
-      <div class="interval-tabs anim-fade-up delay-3" id="hourTabs">
-        ${[1, 2, 3].map(h => `<button type="button" class="interval-tab${state.hourStep === h ? " active" : ""}" data-step="${h}">${h} ${t(h === 1 ? "час" : "часа", "h")}</button>`).join("")}
-      </div>
       <div class="hourly-scroll" id="hourly">${hourCards(data)}</div>
 
-      <div class="section-title anim-fade-up delay-4" id="dailyTitle">📅 ${t("На", "For")} ${state.dayRange} ${t("дней", "days")}</div>
+      <div class="section-title anim-fade-up delay-4" id="dailyTitle">📅 ${t("На", "For")} ${shownDays} ${t("дней", "days")}</div>
       <div class="interval-tabs anim-fade-up delay-4" id="dayTabs">
         ${[5, 7, 14].map(n => `<button type="button" class="interval-tab${state.dayRange === n ? " active" : ""}" data-range="${n}">${n}</button>`).join("")}
       </div>
       <div class="daily-list" id="dailyList">${dayRows(data)}</div>
 
-      <div class="footer anim-fade-up delay-5">${data.src === "owm" ? "OpenWeatherMap" : "Open-Meteo"} · <span id="updatedLabel">${t("обновлено ", "updated ")}${agoText(data.fetchedAt)}</span> · <button type="button" class="refresh-link" data-act="refresh">↻ ${t("обновить", "refresh")}</button> · v${APP_VERSION}${data.src === "owm" && data.note ? `<div class="err-details" style="margin-top:6px">${esc(t("Основной источник недоступен: ", "Primary source unavailable: "))}${esc(data.note)}</div>` : ""}</div>
+      <div class="footer anim-fade-up delay-5">${SRC_NAME[data.src] || "Open-Meteo"} · <span id="updatedLabel">${t("обновлено ", "updated ")}${agoText(data.fetchedAt)}</span> · <button type="button" class="refresh-link" data-act="refresh">↻ ${t("обновить", "refresh")}</button> · v${APP_VERSION}${data.src !== "om" && data.note ? `<div class="err-details" id="srcNote" style="margin-top:6px">${esc(noteText(data))}</div>` : ""}${data.src === "met" ? `<div class="err-details" style="margin-top:4px">${t("Данные: Норвежский метеорологический институт (MET Norway)", "Data: Norwegian Meteorological Institute (MET Norway)")}</div>` : ""}</div>
     `;
 
     // запоминаем, что показано, — повторная перерисовка карточек без изменений не проигрывает анимацию заново
     $("aqiSlot").__html = aqiInner(data); $("pollenSlot").__html = pollenCard(data); $("uvCard").__html = uvCard(data);
+    $("alertsSlot").__html = alertsHtml(data); $("kpSlot").__html = kpCard(data);
 
     updateSky();
     applyEffects(data, city);
@@ -1060,16 +1316,10 @@
   }
 
   // Частичные перерисовки без сброса прокрутки страницы
-  function updateHourly() {
-    if (!state.data) return;
-    const el = $("hourly"); if (el) { el.innerHTML = hourCards(state.data); el.scrollLeft = 0; }
-    const ch = $("chartWrap"); if (ch) ch.innerHTML = chartSvg(state.data);
-    document.querySelectorAll("#hourTabs .interval-tab").forEach(b => b.classList.toggle("active", Number(b.dataset.step) === state.hourStep));
-  }
   function updateDaily() {
     if (!state.data) return;
     const el = $("dailyList"); if (el) el.innerHTML = dayRows(state.data);
-    const ti = $("dailyTitle"); if (ti) ti.textContent = "📅 " + t("На", "For") + " " + state.dayRange + " " + t("дней", "days");
+    const ti = $("dailyTitle"); if (ti) ti.textContent = "📅 " + t("На", "For") + " " + Math.min(state.dayRange, state.data.daily.length) + " " + t("дней", "days");
     document.querySelectorAll("#dayTabs .interval-tab").forEach(b => b.classList.toggle("active", Number(b.dataset.range) === state.dayRange));
   }
 
@@ -1078,7 +1328,7 @@
   // =====================================================================
   function normalizeCity(c) {
     if (!c || !isFinite(Number(c.lat)) || !isFinite(Number(c.lon))) return DEFAULT_CITY;
-    return { name: String(c.name || "—"), lat: Number(c.lat), lon: Number(c.lon), country: c.country || "" };
+    return { name: String(c.name || "—"), lat: Number(c.lat), lon: Number(c.lon), country: c.country || "", tz: typeof c.tz === "number" ? c.tz : undefined, tzName: c.tzName || undefined };
   }
 
   // Open-Meteo ответил позже запасного источника — заменяем данные на полные (16 дней, УФ, вчерашний день)
@@ -1086,10 +1336,21 @@
     return d => {
       if (seq !== state.seq || !state.city) return;
       if (Math.abs(d.lat - state.city.lat) > 0.02 || Math.abs(d.lon - state.city.lon) > 0.02) return;
-      if (state.data) { d.air = state.data.air; d.pollen = state.data.pollen; d.uvx = state.data.uvx; }
+      if (state.data) carryExtras(d, state.data);
       writeCache(d);
       render(d, state.city, { animate: false });
       afterData(d, seq);
+    };
+  }
+
+  function makeCallbacks(seq, city) {
+    return {
+      hint: city,
+      upgrade: makeUpgrade(seq),
+      note: d => {
+        if (seq !== state.seq || state.data !== d) return;
+        const el = $("srcNote"); if (el) el.textContent = noteText(d);
+      }
     };
   }
 
@@ -1097,6 +1358,7 @@
     const city = normalizeCity(cityIn);
     const seq = ++state.seq;
     state.city = city;
+    state.openDay = null;
     store.set(LAST_KEY, city);
 
     const cached = readCache(city.lat, city.lon);
@@ -1104,9 +1366,9 @@
     else { state.data = null; showLoading(city); updateSky(); }
 
     try {
-      const data = await fetchWeather(city.lat, city.lon, force, makeUpgrade(seq));
+      const data = await fetchWeather(city.lat, city.lon, force, makeCallbacks(seq, city));
       if (seq !== state.seq) return;
-      if (cached) { data.air = cached.air; data.pollen = cached.pollen; data.uvx = cached.uvx; }
+      if (cached) carryExtras(data, cached);
       writeCache(data);
       render(data, city, { animate: !cached });
       afterData(data, seq);
@@ -1122,9 +1384,9 @@
     if (!state.city) return false;
     const seq = ++state.seq;
     try {
-      const data = await fetchWeather(state.city.lat, state.city.lon, force, makeUpgrade(seq));
+      const data = await fetchWeather(state.city.lat, state.city.lon, force, makeCallbacks(seq, state.city));
       if (seq !== state.seq) return false;
-      if (state.data && state.data.lat === data.lat) { data.air = state.data.air; data.pollen = state.data.pollen; data.uvx = state.data.uvx; }
+      if (state.data && state.data.lat === data.lat) carryExtras(data, state.data);
       writeCache(data);
       render(data, state.city, { animate: false });
       afterData(data, seq);
@@ -1140,7 +1402,6 @@
 
   function afterData(data, seq) {
     loadExtras(data, seq);
-    maybeRainAlert(data);
   }
 
   // =====================================================================
@@ -1278,25 +1539,27 @@
   function cloudBackground(tone) {
     const T = TONES[tone] || TONES.white;
     const clamp = (v, lo, hi) => Math.max(lo, Math.min(hi, v));
-    // объём: светлая «шапка», середина, тёмное основание — длинное мягкое затухание
     const blob = (rgb, a, w, h, x, y) => {
-      x = clamp(x, w * 0.45, 100 - w * 0.45);
-      y = clamp(y, h * 0.4, 100 - h * 0.4);
-      return `radial-gradient(ellipse ${w.toFixed(0)}% ${h.toFixed(0)}% at ${x.toFixed(0)}% ${y.toFixed(0)}%, rgba(${rgb},${a}) 0%, rgba(${rgb},${(a * 0.55).toFixed(2)}) 32%, rgba(${rgb},${(a * 0.18).toFixed(2)}) 58%, rgba(${rgb},0) 78%)`;
+      x = clamp(x, w, 100 - w); y = clamp(y, h, 100 - h); // пятно целиком внутри блока → нет прямых краёв
+      return `radial-gradient(ellipse ${w.toFixed(0)}% ${h.toFixed(0)}% at ${x.toFixed(0)}% ${y.toFixed(0)}%, rgba(${rgb},${a}) 0%, rgba(${rgb},${(a * 0.55).toFixed(2)}) 45%, rgba(${rgb},0) 100%)`;
     };
     const parts = [];
-    for (let i = 0; i < 6; i++) parts.push(blob(T.lite, 0.95, rnd(18, 30), rnd(22, 36), rnd(12, 88), rnd(22, 44)));
-    for (let i = 0; i < 4; i++) parts.push(blob(T.mid, 0.88, rnd(22, 34), rnd(22, 32), rnd(10, 90), rnd(40, 58)));
-    for (let i = 0; i < 3; i++) parts.push(blob(T.shade, 0.78, rnd(22, 32), rnd(16, 26), 16 + i * 30 + rnd(-8, 8), rnd(56, 74)));
+    const tops = 6 + Math.floor(Math.random() * 3);
+    for (let i = 0; i < tops; i++) parts.push(blob(T.lite, 0.96, rnd(13, 22), rnd(17, 26), rnd(12, 88), rnd(28, 48)));
+    const mids = 4 + Math.floor(Math.random() * 2);
+    for (let i = 0; i < mids; i++) parts.push(blob(T.mid, 0.9, rnd(18, 28), rnd(18, 26), rnd(10, 90), rnd(44, 60)));
+    const base = 4 + Math.floor(Math.random() * 2);
+    for (let i = 0; i < base; i++) parts.push(blob(T.shade, 0.85, rnd(18, 28), rnd(14, 22), 14 + i * (72 / (base - 1)) + rnd(-5, 5), rnd(62, 76)));
     return parts.join(",");
   }
 
   // =====================================================================
-  //  Облака на WebGL: процедурный шум (fbm) с тенями и подсветкой по времени суток.
-  //  Если WebGL недоступен, остаются прежние CSS-облака.
+  //  Облака-текстуры: процедурный шум считается на процессоре в фоновом потоке (Web Worker),
+  //  результат — обычные картинки, которые плавно плывут на видеочипе. Никаких шейдеров, поэтому
+  //  одинаково выглядит на любом телефоне. Если Worker недоступен — прежние CSS-облака.
   // =====================================================================
-  const GLFX = (function () {
-    const canvas = $("cloudGL");
+  const CloudTex = (function () {
+    const host = $("cloudTex");
     const PHASE = {
       dawn:   { light: [1.0, 0.88, 0.80],  shade: [0.54, 0.56, 0.70] },
       day:    { light: [1.0, 1.0, 1.0],    shade: [0.55, 0.63, 0.77] },
@@ -1304,366 +1567,219 @@
       dusk:   { light: [0.62, 0.58, 0.78], shade: [0.28, 0.29, 0.48] },
       night:  { light: [0.34, 0.38, 0.50], shade: [0.11, 0.13, 0.23] }
     };
-    const VS = "attribute vec2 a; void main(){ gl_Position = vec4(a, 0.0, 1.0); }";
-    const FS = [
-      "precision highp float;",
-      "uniform vec2 u_res; uniform float u_time; uniform float u_cover; uniform float u_dark;",
-      "uniform vec3 u_light; uniform vec3 u_shade;",
-      "float hash(vec2 p){ p = fract(p * vec2(123.34, 456.21)); p += dot(p, p + 45.32); return fract(p.x * p.y); }",
-      "float noise(vec2 p){ vec2 i = floor(p); vec2 f = fract(p); f = f * f * (3.0 - 2.0 * f);",
-      "  float a = hash(i), b = hash(i + vec2(1.0, 0.0)), c = hash(i + vec2(0.0, 1.0)), d = hash(i + vec2(1.0, 1.0));",
-      "  return mix(mix(a, b, f.x), mix(c, d, f.x), f.y); }",
-      "float fbm3(vec2 p){ float v = 0.0, a = 0.5; for (int i = 0; i < 3; i++){ v += a * noise(p); p = p * 2.03 + vec2(1.7, 9.2); a *= 0.5; } return v; }",
-      "float fbm4(vec2 p){ float v = 0.0, a = 0.5; for (int i = 0; i < 4; i++){ v += a * noise(p); p = p * 2.03 + vec2(1.7, 9.2); a *= 0.5; } return v; }",
-      "float fbm5(vec2 p){ float v = 0.0, a = 0.5; for (int i = 0; i < 5; i++){ v += a * noise(p); p = p * 2.03 + vec2(1.7, 9.2); a *= 0.5; } return v; }",
-      "void main(){",
-      "  vec2 uv = gl_FragCoord.xy / u_res.y;",
-      "  float t = u_time;",
-      "  vec2 p = uv * vec2(1.15, 1.55) + vec2(t * 0.010, 0.0);",
-      "  vec2 w = vec2(fbm3(p * 0.8 + vec2(0.0, t * 0.010)), fbm3(p * 0.8 + vec2(5.2, 1.3)));",
-      "  vec2 q = p + 0.85 * (w - 0.5) + vec2(t * 0.020, 0.0);",
-      // крупная форма облаков и тот же слой, сдвинутый в сторону света (для теней)
-      "  float f  = fbm5(q);",
-      "  float f2 = fbm5(q + vec2(-0.05, 0.07));",
-      // мелкая «барашковая» деталь: рваные края и объём
-      "  vec2 r = q * 3.6 + vec2(3.1, t * 0.030);",
-      "  float det  = fbm4(r);",
-      "  float det2 = fbm4(r + vec2(-0.12, 0.17));",
-      "  float th = 0.66 - u_cover * 0.50;",
-      "  float e = mix(0.030, 0.095, u_cover);",
-      "  float d = smoothstep(th - e, th + e * 1.7, f + (det - 0.5) * 0.15);",
-      "  float shadow = (f2 - f) * 14.0 + smoothstep(0.45, 0.85, f) * 0.65 + (det2 - det) * 4.6;",
-      "  shadow = clamp(shadow, 0.0, 1.0);",
-      "  shadow = clamp(shadow * (0.75 + 0.5 * u_dark), 0.0, 1.0);",
-      "  vec3 col = mix(u_light, u_shade, shadow);",
-      "  col *= 0.86 + 0.28 * det;",
-      // светлая кайма по краям облаков
-      "  float rim = clamp(d * (1.0 - d) * 4.0, 0.0, 1.0);",
-      "  col += u_light * rim * 0.24 * (1.0 - u_dark);",
-      "  col *= mix(1.0, 1.0 - 0.30 * u_dark, 1.0 - uv.y);",
-      "  float alpha = clamp(d * (0.80 + u_cover * 0.35), 0.0, 1.0);",
-      "  gl_FragColor = vec4(col * alpha, alpha);",
-      "}"
-    ].join("\n");
 
-    let gl = null, ok = null, raf = 0, shown = false, last = 0;
-    const loc = {};
-    const st = { cover: 0, dark: 0, phase: "day" };
-    const T0 = performance.now();
+    // Код Worker'а. Шум периодический, поэтому текстура бесшовно стыкуется сама с собой — облака можно «зациклить».
+    function workerMain() {
+      self.onmessage = function (e) {
+        var m = e.data, N = 256, tab = new Float32Array(N * N), s = m.seed >>> 0, i;
+        function rnd() { s = (Math.imul(s, 1664525) + 1013904223) >>> 0; return s / 4294967296; }
+        for (i = 0; i < N * N; i++) tab[i] = rnd();
+        var px = m.px;
+        function noise(x, y, P) {
+          var ix = Math.floor(x), iy = Math.floor(y), fx = x - ix, fy = y - iy;
+          fx = fx * fx * (3 - 2 * fx); fy = fy * fy * (3 - 2 * fy);
+          var x0 = ((ix % P) + P) % P, x1 = x0 + 1 === P ? 0 : x0 + 1;
+          var y0 = ((iy % P) + P) % P, y1 = y0 + 1 === P ? 0 : y0 + 1;
+          var a = tab[(y0 << 8) | x0], b = tab[(y0 << 8) | x1], c = tab[(y1 << 8) | x0], d = tab[(y1 << 8) | x1];
+          return a + (b - a) * fx + (c - a) * fy + (a - b - c + d) * fx * fy;
+        }
+        function fbm(x, y, oct, sc) {
+          var v = 0, a = 0.5, f = 1;
+          for (var o = 0; o < oct; o++) { v += a * noise(x * f, y * f, px * sc * f); f *= 2; a *= 0.5; }
+          return v;
+        }
+        function ss(a, b, v) { var t = (v - a) / (b - a); t = t < 0 ? 0 : t > 1 ? 1 : t; return t * t * (3 - 2 * t); }
+        var size = m.size, out = new Uint8ClampedArray(size * size * 4), L = m.light, S = m.shade, dk = m.dark, k = 0;
+        var th = 0.66 - m.cover * 0.5, e2 = 0.03 + 0.065 * m.cover;
+        for (var j = 0; j < size; j++) {
+          var y = j / size * px;
+          for (var i2 = 0; i2 < size; i2++) {
+            var x = i2 / size * px;
+            // «мягкое» искажение формы + крупная форма облаков + тот же слой, сдвинутый к свету (для теней)
+            var wx = fbm(x + 5.2, y + 1.3, 3, 1), wy = fbm(x + 17.1, y + 9.7, 3, 1);
+            var qx = x + 0.60 * (wx - 0.5), qy = y + 0.60 * (wy - 0.5);
+            var f = fbm(qx, qy, 5, 1), f2 = fbm(qx - 0.05, qy + 0.07, 5, 1);
+            // мелкая «барашковая» деталь: рваные края и объём
+            var rx = qx * 4 + 3.1, ry = qy * 4;
+            var det = fbm(rx, ry, 4, 4), det2 = fbm(rx - 0.12, ry + 0.17, 4, 4);
+            var dd = ss(th - e2, th + e2 * 1.7, f + (det - 0.5) * 0.15);
+            var sh = (f2 - f) * 6.5 + ss(0.45, 0.85, f) * 0.55 + (det2 - det) * 1.7;
+            sh = sh < 0 ? 0 : sh > 1 ? 1 : sh;
+            sh *= 0.70 + 0.45 * dk; if (sh > 0.88) sh = 0.88;
+            var tone = 0.93 + 0.14 * det;
+            var rim = dd * (1 - dd) * 4; if (rim > 1) rim = 1;
+            var rk = rim * 0.24 * (1 - dk);
+            var al = dd * (0.8 + m.cover * 0.35); if (al > 1) al = 1;
+            out[k++] = ((L[0] * (1 - sh) + S[0] * sh) * tone + L[0] * rk) * 255;
+            out[k++] = ((L[1] * (1 - sh) + S[1] * sh) * tone + L[1] * rk) * 255;
+            out[k++] = ((L[2] * (1 - sh) + S[2] * sh) * tone + L[2] * rk) * 255;
+            out[k++] = al * 255;
+          }
+        }
+        self.postMessage({ id: m.id, size: size, data: out }, [out.buffer]);
+      };
+    }
+
+    let worker = null, ok = null, token = 0, cur = null, nextId = 1;
+    const waiting = new Map();
+    const cache = new Map();   // готовые наборы текстур по ключу (память: не больше двух)
 
     function init() {
       if (ok !== null) return ok;
       ok = false;
-      if (!canvas) return false;
+      if (!host || typeof Worker !== "function" || typeof Blob !== "function" || !window.URL || !URL.createObjectURL) return false;
       try {
-        gl = canvas.getContext("webgl", { alpha: true, premultipliedAlpha: true, antialias: true, depth: false, stencil: false, powerPreference: "default" });
-        if (!gl) return false;
-        const hp = gl.getShaderPrecisionFormat(gl.FRAGMENT_SHADER, gl.HIGH_FLOAT);
-        if (!hp || hp.precision === 0) return false; // без highp шум даёт артефакты — лучше CSS-облака
-        const sh = (type, src) => {
-          const x = gl.createShader(type); gl.shaderSource(x, src); gl.compileShader(x);
-          if (!gl.getShaderParameter(x, gl.COMPILE_STATUS)) throw new Error("shader");
-          return x;
+        worker = new Worker(URL.createObjectURL(new Blob(["(" + workerMain.toString() + ")()"], { type: "application/javascript" })));
+        worker.onmessage = e => { const r = waiting.get(e.data.id); if (r) { waiting.delete(e.data.id); r.resolve(e.data); } };
+        worker.onerror = () => {
+          ok = false; waiting.forEach(r => r.reject()); waiting.clear();
+          hide(); state.fxCode = undefined; updateSky(); // Worker сломался — перерисуем CSS-облаками
         };
-        const prog = gl.createProgram();
-        gl.attachShader(prog, sh(gl.VERTEX_SHADER, VS));
-        gl.attachShader(prog, sh(gl.FRAGMENT_SHADER, FS));
-        gl.bindAttribLocation(prog, 0, "a");
-        gl.linkProgram(prog);
-        if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error("link");
-        gl.useProgram(prog);
-        gl.bindBuffer(gl.ARRAY_BUFFER, gl.createBuffer());
-        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
-        gl.enableVertexAttribArray(0);
-        gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-        ["u_res", "u_time", "u_cover", "u_dark", "u_light", "u_shade"].forEach(n => { loc[n] = gl.getUniformLocation(prog, n); });
-        canvas.addEventListener("webglcontextlost", e => {
-          e.preventDefault(); ok = false; hide();
-          state.fxCode = undefined; updateSky(); // перерисуем CSS-облаками
-        });
         ok = true;
       } catch (e) { ok = false; }
       return ok;
     }
 
-    let quality = 1;     // автоподстройка: на слабых телефонах разрешение снижается само
-    function resize() {
-      // Высокое внутреннее разрешение + CSS-сглаживание — без «квадратиков»
-      const h = window.innerHeight || 800, w = window.innerWidth || 400;
-      const dpr = Math.min(window.devicePixelRatio || 1, 2);
-      const k = Math.min(1.25, 1100 / h) * quality * dpr;
-      const cw = Math.max(2, Math.round(w * k)), ch = Math.max(2, Math.round(h * k));
-      if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
-      gl.viewport(0, 0, cw, ch);
+    const job = p => new Promise((resolve, reject) => { const id = nextId++; waiting.set(id, { resolve, reject }); worker.postMessage(Object.assign({ id }, p)); });
+
+    function mount(set, my, speed) {
+      if (my !== token) return;
+      const vw = window.innerWidth || 400, vh = window.innerHeight || 800;
+      const S = Math.round(Math.max(vh * 1.08, vw * 1.7));   // сторона «плитки» в CSS-пикселях: перекрывает экран по высоте
+      const g = document.createElement("div");
+      g.className = "ctx-set";
+      [["far", 1.7, 0.6, 520], ["near", 1, 1, 260]].forEach(([name, mult, op, dur]) => {
+        const t = set[name], size = Math.round(S * mult);
+        const wrap = document.createElement("div");
+        wrap.className = "ctx-layer";
+        wrap.style.cssText = `width:${size * 2}px;height:${size}px;top:${name === "far" ? "-12" : "-4"}%;opacity:${op};animation-duration:${(dur * speed).toFixed(0)}s`;
+        const c1 = document.createElement("canvas");
+        c1.width = c1.height = t.size;
+        c1.style.cssText = `width:${size}px;height:${size}px`;
+        c1.getContext("2d").putImageData(new ImageData(t.data, t.size, t.size), 0, 0);
+        const c2 = c1.cloneNode(false);
+        c2.getContext("2d").drawImage(c1, 0, 0);
+        wrap.appendChild(c1); wrap.appendChild(c2);   // две копии встык: сдвиг на ширину одной даёт бесшовный цикл
+        g.appendChild(wrap);
+      });
+      host.appendChild(g);
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        g.classList.add("in");
+        // прежний набор плавно гаснет и удаляется
+        host.querySelectorAll(".ctx-set").forEach(el => { if (el !== g) { el.classList.remove("in"); setTimeout(() => el.remove(), 1600); } });
+      }));
     }
 
-    function draw(now) {
-      if (!gl) return;
-      const P = PHASE[st.phase] || PHASE.day, d = st.dark;
+    function render() {
+      if (!cur) return;
+      const c = cur, key = [c.cover, c.dark, c.phase].join("|"), my = ++token;
+      if (cache.has(key)) { mount(cache.get(key), my, c.speed); return; }
+      const P = PHASE[c.phase] || PHASE.day, d = c.dark;
       const L = P.light.map(v => v * (1 - d * 0.58)), S = P.shade.map(v => v * (1 - d * 0.72));
-      gl.uniform2f(loc.u_res, canvas.width, canvas.height);
-      gl.uniform1f(loc.u_time, reduceMotion ? 40 : (now - T0) / 1000);
-      gl.uniform1f(loc.u_cover, st.cover);
-      gl.uniform1f(loc.u_dark, d);
-      gl.uniform3f(loc.u_light, L[0], L[1], L[2]);
-      gl.uniform3f(loc.u_shade, S[0], S[1], S[2]);
-      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      const base = { cover: c.cover, dark: d, light: L, shade: S };
+      // Поэтапно: 1) мгновенный черновик, 2) средний размер, 3) полное качество.
+      // Если средний этап шёл долго (слабый телефон), полный пропускаем — остаётся средний, он тоже чёткий.
+      const stage = (near, far) => Promise.all([
+        job(Object.assign({ size: near, px: 6, seed: 20261016 }, base)),
+        job(Object.assign({ size: far, px: 5, seed: 777 }, Object.assign({}, base, { cover: c.cover * 0.8 })))
+      ]).then(([n, f]) => ({ near: n, far: f }));
+      let t0 = performance.now();
+      stage(256, 128)
+        .then(set => { mount(set, my, c.speed); t0 = performance.now(); return stage(512, 256); })
+        .then(set => {
+          mount(set, my, c.speed);
+          const took = performance.now() - t0;
+          if (took * 4 > 9000) { cache.set(key, set); return null; }   // на полный размер ушло бы >9 с
+          return stage(1024, 512);
+        })
+        .then(set => {
+          if (!set) return;
+          cache.set(key, set);
+          if (cache.size > 2) cache.delete(cache.keys().next().value);
+          mount(set, my, c.speed);
+        })
+        .catch(() => {});
     }
 
-    let prevT = 0, slow = 0;
-    function loop(now) {
-      raf = 0;
-      if (!shown || document.hidden) { prevT = 0; return; }
-      // если кадры идут реже ~13/с, снижаем разрешение (не дольше, чем до 45%)
-      if (prevT) {
-        const dtm = now - prevT;
-        if (dtm > 90) slow++; else if (slow > 0) slow--;
-        // не опускаем ниже 0.75 — иначе появляются пиксельные «квадраты» на фоне
-        if (slow > 18 && quality > 0.75) { quality = Math.max(0.75, quality * 0.9); slow = 0; resize(); }
-      }
-      prevT = now;
-      if (now - last >= 40) { last = now; draw(now); } // ~25 кадров/с достаточно для медленных облаков
-      raf = requestAnimationFrame(loop);
-    }
-    function start() { if (!raf && !reduceMotion) raf = requestAnimationFrame(loop); }
-
-    function show(cover, dark) {
+    function show(cover, dark, phase, speed) {
       if (!init()) return false;
-      st.cover = cover; st.dark = dark;
-      resize();
-      canvas.classList.add("on");
-      shown = true;
-      draw(performance.now());
-      start();
+      cur = { cover, dark, phase: phase || "day", speed: speed || 1 };
+      render();
       return true;
     }
     function hide() {
-      shown = false;
-      if (raf) { cancelAnimationFrame(raf); raf = 0; }
-      if (canvas) canvas.classList.remove("on");
+      token++;
+      cur = null;
+      if (host) host.querySelectorAll(".ctx-set").forEach(el => { el.classList.remove("in"); setTimeout(() => el.remove(), 1600); });
     }
     function setPhase(name) {
-      if (name === st.phase) return;
-      st.phase = name;
-      if (shown) draw(performance.now());
+      if (!cur || name === cur.phase) return;
+      cur.phase = name;
+      render(); // цвет облаков меняется вместе со временем суток
     }
-    window.addEventListener("resize", () => { if (shown) { resize(); draw(performance.now()); } });
-    document.addEventListener("visibilitychange", () => { if (!document.hidden && shown) start(); });
     return { show, hide, setPhase, available: init };
   })();
 
-  // =====================================================================
-  //  Объёмные «пушистые» облака (Canvas 2D) — как на фото кучевых облаков
-  // =====================================================================
-  const SoftClouds = (function () {
-    let canvas = null, ctx = null, raf = 0, clouds = [], phase = "day", cover = 0.7, dark = 0;
-    let W = 0, H = 0, dpr = 1, t0 = 0, running = false;
-
-    const PAL = {
-      dawn:   { hi: [255, 236, 220], mid: [240, 210, 195], lo: [190, 160, 150] },
-      day:    { hi: [255, 255, 255], mid: [232, 240, 250], lo: [168, 186, 210] },
-      sunset: { hi: [255, 230, 200], mid: [240, 180, 150], lo: [160, 110, 100] },
-      dusk:   { hi: [180, 185, 210], mid: [120, 125, 155], lo: [70, 75, 100] },
-      night:  { hi: [90, 100, 130],  mid: [55, 62, 85],   lo: [28, 32, 48] }
-    };
-
-    function ensure() {
-      if (canvas) return true;
-      canvas = $("cloudGL");
-      if (!canvas) return false;
-      ctx = canvas.getContext("2d", { alpha: true });
-      if (!ctx) return false;
-      canvas.style.display = "block";
-      canvas.classList.add("on");
-      return true;
-    }
-
-    function resize() {
-      if (!canvas) return;
-      dpr = Math.min(window.devicePixelRatio || 1, 2);
-      W = window.innerWidth || 400;
-      H = window.innerHeight || 800;
-      canvas.width = Math.round(W * dpr);
-      canvas.height = Math.round(H * dpr);
-      canvas.style.width = W + "px";
-      canvas.style.height = H + "px";
-      ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    }
-
-    // Одно кучевое облако = куча мягких шаров (свет сверху, тень снизу)
-    function makeCloud(cx, cy, scale, speed) {
-      const puffs = [];
-      const baseR = (0.09 + Math.random() * 0.07) * W * scale;
-      const n = 7 + Math.floor(Math.random() * 5);
-      for (let i = 0; i < n; i++) {
-        const ang = (i / n) * Math.PI * 2 + Math.random() * 0.4;
-        const dist = baseR * (0.15 + Math.random() * 0.55);
-        puffs.push({
-          ox: Math.cos(ang) * dist * (0.7 + Math.random() * 0.6),
-          oy: Math.sin(ang) * dist * 0.45 - baseR * 0.15,
-          r: baseR * (0.35 + Math.random() * 0.55),
-          bright: 0.55 + Math.random() * 0.45
-        });
-      }
-      // крупное основание
-      puffs.push({ ox: 0, oy: baseR * 0.15, r: baseR * 1.1, bright: 0.35 });
-      puffs.push({ ox: -baseR * 0.4, oy: baseR * 0.05, r: baseR * 0.7, bright: 0.5 });
-      puffs.push({ ox: baseR * 0.45, oy: baseR * 0.08, r: baseR * 0.75, bright: 0.55 });
-      return { x: cx, y: cy, puffs, speed, scale, wobble: Math.random() * Math.PI * 2 };
-    }
-
-    function rebuild() {
-      clouds = [];
-      if (W < 10 || H < 10) return;
-      const count = cover < 0.25 ? 2 : cover < 0.5 ? 4 : cover < 0.75 ? 7 : 10;
-      for (let i = 0; i < count; i++) {
-        const scale = 0.85 + Math.random() * 1.1;
-        const cx = (i / count) * W * 1.3 - W * 0.15 + Math.random() * W * 0.2;
-        const cy = H * (0.08 + Math.random() * 0.42);
-        const speed = (0.008 + Math.random() * 0.018) * (0.7 + scale * 0.3);
-        clouds.push(makeCloud(cx, cy, scale, speed));
-      }
-    }
-
-    function puff(px, py, r, col, a) {
-      // плотное ядро + мягкий край — «вата» как на фото
-      const g = ctx.createRadialGradient(px, py - r * 0.2, 0, px, py + r * 0.05, r);
-      g.addColorStop(0, `rgba(${col[0]},${col[1]},${col[2]},${a})`);
-      g.addColorStop(0.35, `rgba(${col[0]},${col[1]},${col[2]},${(a * 0.92).toFixed(3)})`);
-      g.addColorStop(0.7, `rgba(${col[0]},${col[1]},${col[2]},${(a * 0.4).toFixed(3)})`);
-      g.addColorStop(1, `rgba(${col[0]},${col[1]},${col[2]},0)`);
-      ctx.fillStyle = g;
-      ctx.beginPath();
-      ctx.arc(px, py, r, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    function drawCloud(c, t) {
-      const pal = PAL[phase] || PAL.day;
-      const x = ((c.x + t * c.speed * W) % (W * 1.5 + 200)) - 100;
-      const y = c.y + Math.sin(t * 0.15 + c.wobble) * 6;
-      // нижняя серо-голубая тень (объём)
-      c.puffs.forEach(p => {
-        const pr = p.r;
-        const px = x + p.ox, py = y + p.oy + pr * 0.1;
-        const lo = [
-          Math.round(pal.lo[0] * (1 - dark * 0.25)),
-          Math.round(pal.lo[1] * (1 - dark * 0.25)),
-          Math.round(pal.lo[2] * (1 - dark * 0.25))
-        ];
-        puff(px, py + pr * 0.15, pr * 1.12, lo, 0.5 + (1 - p.bright) * 0.35);
-      });
-      // средние тона
-      c.puffs.forEach(p => {
-        const pr = p.r * 0.95;
-        const px = x + p.ox, py = y + p.oy;
-        const mid = [
-          Math.round(pal.mid[0] * (1 - dark * 0.3)),
-          Math.round(pal.mid[1] * (1 - dark * 0.3)),
-          Math.round(pal.mid[2] * (1 - dark * 0.3))
-        ];
-        puff(px, py, pr, mid, 0.7 + p.bright * 0.2);
-      });
-      // яркие белые «шапки»
-      c.puffs.forEach(p => {
-        const pr = p.r * 0.72;
-        const px = x + p.ox * 0.9, py = y + p.oy - p.r * 0.12;
-        const hi = [
-          Math.round(pal.hi[0] * (1 - dark * 0.35)),
-          Math.round(pal.hi[1] * (1 - dark * 0.35)),
-          Math.round(pal.hi[2] * (1 - dark * 0.35))
-        ];
-        puff(px, py, pr, hi, 0.75 + p.bright * 0.25);
-      });
-    }
-
-    function frame(now) {
-      raf = 0;
-      if (!running || !ctx) return;
-      if (!t0) t0 = now;
-      const t = (now - t0) / 1000;
-      ctx.clearRect(0, 0, W, H);
-      // чуть прозрачнее облака — текст сверху читается лучше
-      ctx.save();
-      ctx.globalAlpha = 0.88;
-      if (cover > 0.4) {
-        const hg = ctx.createLinearGradient(0, H * 0.35, 0, H);
-        const a0 = 0.06 * cover, a1 = 0.16 * cover;
-        hg.addColorStop(0, `rgba(255,255,255,${a0})`);
-        hg.addColorStop(1, `rgba(220,230,240,${a1})`);
-        ctx.fillStyle = hg;
-        ctx.fillRect(0, H * 0.35, W, H * 0.65);
-      }
-      clouds.forEach(c => drawCloud(c, reduceMotion ? 20 : t));
-      ctx.restore();
-      if (!reduceMotion && !document.hidden) raf = requestAnimationFrame(frame);
-    }
-
-    function show(cov, drk) {
-      if (!ensure()) return false;
-      cover = cov; dark = drk;
-      resize();
-      rebuild();
-      running = true;
-      canvas.classList.add("on");
-      canvas.style.display = "block";
-      if (raf) cancelAnimationFrame(raf);
-      t0 = 0;
-      raf = requestAnimationFrame(frame);
-      return true;
-    }
-    function hide() {
-      running = false;
-      if (raf) { cancelAnimationFrame(raf); raf = 0; }
-      if (canvas) { canvas.classList.remove("on"); ctx && ctx.clearRect(0, 0, W, H); }
-    }
-    function setPhase(name) {
-      phase = name || "day";
-      if (running && !raf) raf = requestAnimationFrame(frame);
-    }
-    window.addEventListener("resize", () => {
-      if (!running) return;
-      resize(); rebuild();
-    });
-    document.addEventListener("visibilitychange", () => {
-      if (!document.hidden && running && !raf) raf = requestAnimationFrame(frame);
-    });
-    return { show, hide, setPhase };
-  })();
+  // Три «глубины» CSS-облаков (запасной вариант без WebGL)
+  const DEPTH = [
+    { share: 0.28, top: [0, 30],  w: 0.75, op: [0.5, 0.7],   blur: 3, speed: 1.7 },
+    { share: 0.44, top: [8, 48],  w: 1,    op: [0.85, 0.97], blur: 0, speed: 1 },
+    { share: 0.28, top: [22, 66], w: 1.2,  op: [0.92, 1],    blur: 0, speed: 0.75 }
+  ];
 
   function buildFx(code) {
     const box = $("cloudFx"); if (!box) return;
     box.innerHTML = "";
     const kind = kindOf(code);
-    let cover = 0, dark = 0, fog = false, flash = false, vig = 0, dim = 0;
+    let n = 0, tone = "white", dim = 0, fog = false, flash = false, vig = 0, wMin = 70, wMax = 110, gp = null;
     if (kind === "clouds") {
-      if (code === 3) { cover = 0.92; dark = 0.22; dim = 0.18; vig = 0.45; }
-      else if (code === 2) { cover = 0.55; dark = 0.05; }
-      else { cover = 0.7; dark = 0.12; }
+      if (code === 3) { n = 11; tone = "grey"; dim = 0.4; vig = 0.6; wMin = 110; wMax = 150; gp = [0.9, 0.2]; }
+      else { n = 5; wMin = 60; wMax = 95; gp = [0.6, 0]; }
     }
-    else if (kind === "clear" && code === 1) { cover = 0.22; }
-    else if (kind === "rain") { cover = 0.95; dark = 0.4; dim = 0.28; vig = 0.7; }
-    else if (kind === "storm") { cover = 1; dark = 0.55; dim = 0.4; vig = 0.9; flash = true; }
-    else if (kind === "snow") { cover = 0.85; dark = 0.2; dim = 0.15; vig = 0.4; }
-    else if (kind === "fog") { fog = true; dim = 0.15; cover = 0.3; }
+    else if (kind === "clear" && code === 1) { n = 2; wMin = 55; wMax = 80; gp = [0.2, 0]; }
+    else if (kind === "rain") { n = 11; tone = "dark"; dim = 0.42; vig = 0.9; wMin = 100; wMax = 140; gp = [1, 0.5]; }
+    else if (kind === "storm") { n = 12; tone = "dark"; dim = 0.52; vig = 1; flash = true; wMin = 100; wMax = 145; gp = [1, 0.85]; }
+    else if (kind === "snow") { n = 8; tone = "grey"; dim = 0.28; vig = 0.5; wMin = 90; wMax = 125; gp = [0.9, 0.2]; }
+    else if (kind === "fog") { fog = true; dim = 0.2; }
 
-    GLFX.hide();
-    if (cover > 0.05) SoftClouds.show(cover, dark);
-    else SoftClouds.hide();
+    // WebGL-облака вместо CSS-пятен, если получилось
+    const useTex = !!gp && CloudTex.show(gp[0], gp[1], state.phase, kind === "storm" || kind === "rain" ? 0.65 : 1);
+    if (!useTex) CloudTex.hide();
+    if (useTex) { n = 0; dim = 0; }
 
     const frag = document.createDocumentFragment();
     const add = (cls, css) => { const el = document.createElement("div"); el.className = cls; el.style.cssText = css; frag.appendChild(el); return el; };
-    if (dim) add("fx-dim", `background:rgba(70,85,110,${dim})`);
+
+    if (dim) add("fx-dim", `background:rgba(92,106,128,${dim})`);
+
+    const windy = kind === "storm" || kind === "rain" ? 0.65 : 1; // в непогоду ветер сильнее
+    DEPTH.forEach(L => {
+      const cnt = n ? Math.max(1, Math.round(n * L.share)) : 0;
+      for (let j = 0; j < cnt; j++) {
+        const w = rnd(wMin, wMax) * L.w;
+        const dur = rnd(110, 240) * L.speed * windy;
+        const delay = -(dur * (j / cnt) + rnd(0, dur / cnt));
+        const top = L.top[0] + (j / cnt) * (L.top[1] - L.top[0]) + rnd(-3, 3);
+        add("cloud",
+          `--w:${w.toFixed(0)}vw;--x:${rnd(-40, 60).toFixed(0)}vw;top:${top.toFixed(1)}%;width:${w.toFixed(0)}vw;height:${(w * 0.46).toFixed(0)}vw;` +
+          `opacity:${rnd(L.op[0], L.op[1]).toFixed(2)};background:${cloudBackground(tone)};` +
+          (L.blur ? `filter:blur(${L.blur}px);` : "") +
+          `animation-duration:${dur.toFixed(0)}s;animation-delay:${delay.toFixed(0)}s`);
+      }
+    });
+
     if (vig) add("fx-vignette", `opacity:${vig}`);
+
     if (fog) {
       add("fx-haze", "");
-      for (let i = 0; i < 5; i++) {
+      for (let i = 0; i < 6; i++) {
         add("fog-band",
-          `top:${(6 + i * 16).toFixed(0)}%;height:${rnd(22, 36).toFixed(0)}vh;opacity:${rnd(0.5, 0.85).toFixed(2)};` +
-          `animation-duration:${rnd(40, 75).toFixed(0)}s;animation-delay:${(-rnd(0, 50)).toFixed(0)}s`);
+          `top:${(4 + i * 15 + rnd(-3, 3)).toFixed(0)}%;height:${rnd(24, 38).toFixed(0)}vh;opacity:${rnd(0.55, 0.9).toFixed(2)};` +
+          `animation-duration:${rnd(34, 70).toFixed(0)}s;animation-delay:${(-rnd(0, 60)).toFixed(0)}s;` +
+          `animation-direction:${i % 2 ? "alternate" : "alternate-reverse"}`);
       }
     }
-    if (flash) add("fx-flash", `animation-duration:${rnd(6, 11).toFixed(1)}s`);
+    if (flash) add("fx-flash", `animation-duration:${rnd(6, 11).toFixed(1)}s;animation-delay:${(-rnd(0, 6)).toFixed(1)}s`);
     box.appendChild(frag);
   }
 
@@ -1671,45 +1787,13 @@
   function paintFx(phase) {
     const box = $("cloudFx"); if (!box) return;
     const code = state.data ? state.data.current.code : null;
-    GLFX.setPhase(phase);
-    SoftClouds.setPhase(phase);
+    state.phase = phase;
+    CloudTex.setPhase(phase);
     if (code !== state.fxCode) {
       state.fxCode = code;
-      if (code == null) { box.innerHTML = ""; GLFX.hide(); SoftClouds.hide(); } else buildFx(code);
+      if (code == null) { box.innerHTML = ""; CloudTex.hide(); } else buildFx(code);
     }
     box.style.filter = "brightness(" + (FX_BRIGHT[phase] || 1) + ")";
-  }
-
-  let audioCtx = null, noiseNode = null;
-  const SOUND = { rain: [1200, 0.03], storm: [1200, 0.035], snow: [700, 0.02], fog: [600, 0.015], clouds: [500, 0.015] };
-  function stopSound() {
-    try { if (noiseNode) noiseNode.stop(); } catch (e) {}
-    noiseNode = null;
-    if (audioCtx) { try { audioCtx.close(); } catch (e) {} audioCtx = null; }
-  }
-  function startSound(kind) {
-    stopSound();
-    if (settings.sound !== "on" || !SOUND[kind] || document.hidden) return;
-    try {
-      const AC = window.AudioContext || window.webkitAudioContext;
-      audioCtx = new AC();
-      // Браузеры запускают звук только после касания — возобновим при первом же жесте
-      if (audioCtx.state === "suspended") {
-        const resume = () => { if (audioCtx) audioCtx.resume(); window.removeEventListener("pointerdown", resume); };
-        window.addEventListener("pointerdown", resume, { once: true });
-      }
-      const size = 2 * audioCtx.sampleRate;
-      const buf = audioCtx.createBuffer(1, size, audioCtx.sampleRate);
-      const data = buf.getChannelData(0);
-      for (let i = 0; i < size; i++) data[i] = Math.random() * 2 - 1;
-      noiseNode = audioCtx.createBufferSource();
-      noiseNode.buffer = buf; noiseNode.loop = true;
-      const filter = audioCtx.createBiquadFilter();
-      filter.type = "lowpass"; filter.frequency.value = SOUND[kind][0];
-      const gain = audioCtx.createGain(); gain.gain.value = SOUND[kind][1];
-      noiseNode.connect(filter); filter.connect(gain); gain.connect(audioCtx.destination);
-      noiseNode.start();
-    } catch (e) { /* звук не критичен */ }
   }
 
   // Эффекты запускаются только при смене города/погоды, а не при каждой перерисовке
@@ -1719,58 +1803,16 @@
     const key = city.lat.toFixed(2) + "," + city.lon.toFixed(2) + "|" + kind;
     if (key === state.effectsKey) return;
     state.effectsKey = key;
-    requestAnimationFrame(() => setTimeout(() => { setParticles(kind); startSound(kind); }, 50));
+    requestAnimationFrame(() => setTimeout(() => setParticles(kind), 50));
   }
 
   document.addEventListener("visibilitychange", () => {
-    if (document.hidden) { stopSound(); return; }
+    if (document.hidden) return;
     if (state.data) {
-      startSound(kindOf(state.data.current.code));
       updateSky();
       if (Date.now() - state.data.fetchedAt > STALE_MS) refresh(false);
     }
   });
-
-  // --- Уведомления ---
-  async function showNotice(title, body, tag) {
-    const opts = { body, tag, icon: "icons/icon-192.png", badge: "icons/icon-192.png", lang: settings.lang };
-    try {
-      // На Android new Notification() не работает — нужен showNotification через Service Worker
-      if ("serviceWorker" in navigator) {
-        const reg = await navigator.serviceWorker.getRegistration();
-        if (reg) { await reg.showNotification(title, opts); return; }
-      }
-      new Notification(title, opts);
-    } catch (e) { /* нет разрешения/поддержки */ }
-  }
-
-  function maybeRainAlert(data) {
-    if (!("Notification" in window) || Notification.permission !== "granted") return;
-    const now = Date.now() / 1000;
-    const soon = data.hourly.find(h => h.dt > now && h.dt - now < 3 * 3600 && (h.pop || 0) >= 50);
-    if (!soon) return;
-    const slot = data.lat.toFixed(2) + "," + data.lon.toFixed(2) + "@" + soon.dt;
-    if (store.get(RAIN_KEY, "") === slot) return; // этот дождь уже анонсировали
-    store.set(RAIN_KEY, slot);
-    const when = fmtHM(soon.dt, data.tz);
-    showNotice(t("Скоро дождь", "Rain soon"),
-      t("Вероятность осадков " + soon.pop + "% около " + when, "Chance of precipitation " + soon.pop + "% around " + when), "rain-alert");
-  }
-
-  async function enableNotifications() {
-    if (!("Notification" in window)) { toast(t("Уведомления не поддерживаются на этом устройстве", "Notifications are not supported on this device")); return; }
-    if (Notification.permission === "denied") { toast(t("Уведомления запрещены в настройках браузера", "Notifications are blocked in browser settings")); return; }
-    const p = await Notification.requestPermission();
-    updateNotifBtn();
-    if (p === "granted") { if (state.data) maybeRainAlert(state.data); if (state.data && state.city) render(state.data, state.city, { animate: false }); }
-  }
-  function updateNotifBtn() {
-    const b = $("notifEnableBtn"); if (!b) return;
-    if (!("Notification" in window)) { b.textContent = t("Недоступно", "Unavailable"); b.disabled = true; return; }
-    if (Notification.permission === "granted") b.textContent = t("Включены ✓", "Enabled ✓");
-    else if (Notification.permission === "denied") b.textContent = t("Запрещены", "Blocked");
-    else b.textContent = t("Разрешить", "Allow");
-  }
 
   // =====================================================================
   //  Toast
@@ -1795,7 +1837,7 @@
   //  Поиск
   // =====================================================================
   const LOCAL_CITIES = [
-    { name: "Урюпинск", latitude: 50.8047, longitude: 42.0138, country: "RU", admin1: "Волгоградская область" },
+    { name: "Урюпинск", latitude: 50.8047, longitude: 42.0138, country: "RU", admin1: "Волгоградская область", tzName: "Europe/Volgograd" },
     { name: "Москва", latitude: 55.7558, longitude: 37.6173, country: "RU", admin1: "" },
     { name: "Санкт-Петербург", latitude: 59.9343, longitude: 30.3351, country: "RU", admin1: "" },
     { name: "Волгоград", latitude: 48.7080, longitude: 44.5133, country: "RU", admin1: "" },
@@ -1822,7 +1864,7 @@
       getJson(base + "&count=6&countryCode=RU", 6000).catch(() => null),
       getJson(base + "&count=5", 6000).catch(() => null)
     ]);
-    const map = c => ({ name: c.name, latitude: c.latitude, longitude: c.longitude, country: c.country_code || "", admin1: c.admin1 || "" });
+    const map = c => ({ name: c.name, latitude: c.latitude, longitude: c.longitude, country: c.country_code || "", admin1: c.admin1 || "", tzName: c.timezone || "" });
     const all = [].concat(local, ((ru && ru.results) || []).map(map), ((world && world.results) || []).map(map));
     const seen = new Set(), out = [];
     all.forEach(c => {
@@ -1847,7 +1889,7 @@
     suggestionsEl.classList.remove("show");
     searchInput.value = "";
     searchInput.blur();
-    loadCity({ name: r.name, lat: r.latitude, lon: r.longitude, country: r.country });
+    loadCity({ name: r.name, lat: r.latitude, lon: r.longitude, country: r.country, tzName: r.tzName });
   }
 
   let searchTimer = null, searchSeq = 0;
@@ -1922,19 +1964,23 @@
   //  Клики по контенту (делегирование вместо onclick="…" в разметке)
   // =====================================================================
   content.addEventListener("click", e => {
-    const el = e.target.closest("[data-act],[data-fav],[data-step],[data-range]");
+    const el = e.target.closest("[data-act],[data-fav],[data-day],[data-range]");
     if (!el) return;
     if (el.dataset.fav != null) {
       const f = favorites[Number(el.dataset.fav)];
       if (f) loadCity(f);
-    } else if (el.dataset.step != null) {
-      state.hourStep = Number(el.dataset.step) || 3; updateHourly();
+    } else if (el.dataset.day != null) {
+      const d = state.data && state.data.daily[Number(el.dataset.day)];
+      if (d) { state.openDay = state.openDay === d.date ? null : d.date; updateDaily(); }
     } else if (el.dataset.range != null) {
       state.dayRange = Number(el.dataset.range) || 7; updateDaily();
     } else if (el.dataset.act === "fav") toggleFavorite();
     else if (el.dataset.act === "retry") loadCity(state.city || DEFAULT_CITY, true);
-    else if (el.dataset.act === "notif") enableNotifications();
     else if (el.dataset.act === "refresh") manualRefresh();
+  });
+
+  content.addEventListener("keydown", e => {
+    if ((e.key === "Enter" || e.key === " ") && e.target.matches && e.target.matches("[data-day]")) { e.preventDefault(); e.target.click(); }
   });
 
   async function manualRefresh() {
@@ -1962,7 +2008,7 @@
     if (settingsOpen) return;
     settingsOpen = true;
     settingsPanel.classList.add("open");
-    syncSettingsUI(); updateNotifBtn();
+    syncSettingsUI();
     // чтобы системная кнопка «Назад» закрывала панель, а не выходила из приложения
     try { history.pushState({ settings: 1 }, ""); historyPushed = true; } catch (e) {}
   }
@@ -1988,7 +2034,6 @@
     locBtn.setAttribute("aria-label", t("Моё местоположение", "My location"));
     $("settingsBtn").setAttribute("aria-label", t("Настройки", "Settings"));
     $("ptrIndicator").textContent = t("Потяните, чтобы обновить", "Pull to refresh");
-    updateNotifBtn();
   }
 
   $("settingsBtn").addEventListener("click", openSettings);
@@ -2000,12 +2045,10 @@
       settings[k] = btn.dataset.v;
       saveSettings(); syncSettingsUI();
       if (k === "lang") applyLang();
-      if (k === "sound") { if (settings.sound === "off") stopSound(); else if (state.data) startSound(kindOf(state.data.current.code)); }
       if (k === "theme") updateSky();
       if (state.data && state.city) render(state.data, state.city, { animate: false });
     });
   });
-  $("notifEnableBtn").addEventListener("click", enableNotifications);
 
   // Проверка связи: показывает, какой именно источник доступен и за сколько отвечает
   async function runDiagnostics() {
@@ -2018,6 +2061,8 @@
       ["Open-Meteo " + t("воздух", "air"), "https://air-quality-api.open-meteo.com/v1/air-quality?latitude=" + lat + "&longitude=" + lon + "&current=european_aqi"],
       ["Open-Meteo " + t("поиск", "search"), "https://geocoding-api.open-meteo.com/v1/search?name=Moscow&count=1"]
     ];
+    tests.push(["Open-Meteo (" + t("зеркало", "mirror") + ")", OM_MIRROR + "/v1/forecast?latitude=" + lat + "&longitude=" + lon + "&current=temperature_2m"]);
+    tests.push(["MET Norway", "https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=" + Number(lat).toFixed(4) + "&lon=" + Number(lon).toFixed(4)]);
     if (WX.OWM_KEY) tests.push(["OpenWeatherMap", "https://api.openweathermap.org/data/2.5/weather?lat=" + lat + "&lon=" + lon + "&appid=" + WX.OWM_KEY + "&units=metric"]);
     const ms = t("мс", "ms");
     const lines = await Promise.all(tests.map(async ([name, url]) => {
@@ -2028,6 +2073,13 @@
     out.textContent = lines.join("\n") + "\n" + t("Браузер сообщает: ", "Browser reports: ") + (navigator.onLine === false ? t("нет сети", "offline") : t("сеть есть", "online"));
   }
   $("diagBtn").addEventListener("click", runDiagnostics);
+
+  // Сброс «застрявшей» версии: удаляем Service Worker и кэши приложения, затем перезагружаем
+  $("resetBtn").addEventListener("click", async () => {
+    try { const regs = await navigator.serviceWorker.getRegistrations(); await Promise.all(regs.map(r => r.unregister())); } catch (e) {}
+    try { const ks = await caches.keys(); await Promise.all(ks.map(k => caches.delete(k))); } catch (e) {}
+    location.reload();
+  });
 
   // --- Установка приложения ---
   let installEvent = null;
@@ -2079,6 +2131,27 @@
     window.addEventListener("touchcancel", () => { active = false; hide(); });
   })();
 
+  // Свайп влево/вправо по экрану — следующий/предыдущий избранный город
+  (function setupSwipe() {
+    let x0 = 0, y0 = 0, armed = false;
+    window.addEventListener("touchstart", e => {
+      armed = false;
+      if (settingsOpen || e.touches.length !== 1) return;
+      if (e.target.closest && e.target.closest(".hourly-scroll, .chart-wrap, input, .suggestions, .fav-bar")) return; // там свой горизонтальный скролл
+      x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; armed = true;
+    }, { passive: true });
+    window.addEventListener("touchend", e => {
+      if (!armed || favorites.length < 2) return;
+      armed = false;
+      const pt = e.changedTouches[0], dx = pt.clientX - x0, dy = pt.clientY - y0;
+      if (Math.abs(dx) < 80 || Math.abs(dy) > 60 || Math.abs(dx) < Math.abs(dy) * 2) return;
+      const n = favorites.length;
+      const idx = state.city ? favorites.findIndex(f => Math.abs(f.lat - state.city.lat) < 0.01 && Math.abs(f.lon - state.city.lon) < 0.01) : -1;
+      const next = dx < 0 ? (idx + 1) % n : (idx <= 0 ? n - 1 : idx - 1);
+      if (favorites[next]) { toast(favorites[next].name); loadCity(favorites[next]); }
+    });
+  })();
+
   (function setupHeaderScroll() {
     const header = $("header");
     let lastY = window.scrollY || 0, ticking = false;
@@ -2112,14 +2185,20 @@
   }, 60 * 1000);
 
   if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1")) {
-    const hadController = !!navigator.serviceWorker.controller;
+    let hadController = !!navigator.serviceWorker.controller;
     let reloading = false;
     navigator.serviceWorker.addEventListener("controllerchange", () => {
-      if (!hadController || reloading) return; // первая установка — перезагрузка не нужна
+      // Первая установка в этой сессии — перезагрузка не нужна, но дальше любая смена версии должна перезагружать страницу.
+      // (Раньше признак запоминался один раз при загрузке, и в сессии, начатой без Service Worker, обновление не применялось.)
+      if (!hadController) { hadController = true; return; }
+      if (reloading) return;
       reloading = true; location.reload();
     });
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("sw.js").then(reg => {
+      navigator.serviceWorker.register("sw.js", { updateViaCache: "none" }).then(reg => {
+        // сами просим браузер проверить новую версию (иначе он делает это не чаще раза в сутки)
+        reg.update().catch(() => {});
+        document.addEventListener("visibilitychange", () => { if (!document.hidden) reg.update().catch(() => {}); });
         const offer = worker => toast(t("Доступна новая версия", "A new version is available"), {
           label: t("Обновить", "Update"), run: () => worker.postMessage({ type: "SKIP_WAITING" })
         });
