@@ -164,97 +164,59 @@
 
     /* ===== Дневной / ночной режим текста ===== */
     body.day-mode {
-      --text: #0b1220;
-      --muted: #1e293b;
-      --card: rgba(255, 255, 255, 0.82);
-      --glass: rgba(255, 255, 255, 0.72);
-      --border: rgba(15, 23, 42, 0.14);
+      --text: #0f172a;
+      --muted: #334155;
+      --card: rgba(255, 255, 255, 0.55);
+      --glass: rgba(255, 255, 255, 0.4);
+      --border: rgba(15, 23, 42, 0.12);
     }
-    /* читаемость поверх светлых облаков: тёмный текст + белое «сияние» */
     body.day-mode .city-name,
     body.day-mode .condition {
-      color: #0b1220;
-      text-shadow:
-        0 0 12px rgba(255,255,255,0.95),
-        0 0 24px rgba(255,255,255,0.85),
-        0 1px 2px rgba(255,255,255,1),
-        0 2px 8px rgba(0,0,0,0.12);
+      color: #0f172a;
+      text-shadow: 0 1px 8px rgba(255,255,255,0.5);
     }
     body.day-mode .date,
     body.day-mode .feels {
-      color: #1e293b;
-      text-shadow:
-        0 0 10px rgba(255,255,255,0.95),
-        0 1px 3px rgba(255,255,255,1);
+      color: #334155;
+      text-shadow: none;
     }
     body.day-mode .temp-main {
-      background: none;
-      -webkit-background-clip: unset;
-      background-clip: unset;
-      -webkit-text-fill-color: #0b1220;
-      color: #0b1220;
+      background: linear-gradient(180deg, #0f172a 20%, #475569);
+      -webkit-background-clip: text;
+      background-clip: text;
       filter: none;
-      text-shadow:
-        0 0 16px rgba(255,255,255,1),
-        0 0 28px rgba(255,255,255,0.9),
-        0 2px 4px rgba(255,255,255,1);
     }
     body.day-mode .temp-main span {
-      -webkit-text-fill-color: #334155;
-      color: #334155;
-      text-shadow: 0 0 10px rgba(255,255,255,1);
+      -webkit-text-fill-color: #64748b;
     }
     body.day-mode .section-title {
-      color: #0b1220;
-      text-shadow: 0 0 10px rgba(255,255,255,0.9), 0 1px 2px rgba(255,255,255,1);
+      color: #0f172a;
     }
     body.day-mode .stat-card,
     body.day-mode .hour-card,
     body.day-mode .day-row {
-      background: rgba(255, 255, 255, 0.88);
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
-      border: 1px solid rgba(255,255,255,0.95);
-      color: #0b1220;
-      box-shadow: 0 4px 20px rgba(15, 23, 42, 0.08);
+      background: rgba(255, 255, 255, 0.55);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(255,255,255,0.6);
+      color: #0f172a;
     }
     body.day-mode .stat-card .label,
     body.day-mode .hour-card .time {
-      color: #334155;
+      color: #475569;
     }
     body.day-mode .interval-tab {
-      background: rgba(255, 255, 255, 0.75);
-      color: #1e293b;
-      border-color: rgba(15, 23, 42, 0.12);
-      font-weight: 700;
+      background: rgba(255, 255, 255, 0.4);
+      color: #475569;
+      border-color: rgba(15, 23, 42, 0.1);
     }
     body.day-mode .interval-tab.active {
-      background: rgba(14, 165, 233, 0.35);
-      color: #0c4a6e;
-      border-color: rgba(14, 165, 233, 0.55);
+      background: rgba(14, 165, 233, 0.25);
+      color: #0369a1;
+      border-color: rgba(14, 165, 233, 0.4);
     }
     body.day-mode .footer {
-      color: #334155;
-      text-shadow: 0 0 8px rgba(255,255,255,0.9);
-    }
-    body.day-mode .detail-card,
-    body.day-mode .info-card,
-    body.day-mode .aqi-card,
-    body.day-mode .pollen-card,
-    body.day-mode .moon-card,
-    body.day-mode .wear-card,
-    body.day-mode .chart-card {
-      background: rgba(255, 255, 255, 0.88) !important;
-      color: #0b1220;
-      border-color: rgba(255,255,255,0.95);
-    }
-    body.day-mode .detail-card .d-label,
-    body.day-mode .detail-card .d-sub {
-      color: #475569 !important;
-    }
-    body.day-mode .detail-card .d-value {
-      color: #0b1220 !important;
-      font-weight: 700;
+      color: #64748b;
     }
 
     /* Переключатель интервала часов */
@@ -363,9 +325,8 @@
     }
 
     body.day-mode .header {
-      background: rgba(255, 255, 255, 0.78);
-      border-bottom-color: rgba(15, 23, 42, 0.1);
-      box-shadow: 0 4px 18px rgba(15, 23, 42, 0.06);
+      background: rgba(255, 255, 255, 0.35);
+      border-bottom-color: rgba(15, 23, 42, 0.08);
     }
 
     .search-box {
@@ -1113,12 +1074,7 @@
     #cloudFx { position: fixed; inset: 0; z-index: 0; pointer-events: none; overflow: hidden; transition: filter 2s ease; }
     #cloudFx .fx-dim { position: absolute; inset: 0; }
 
-    .cloud {
-      position: absolute; left: 0; will-change: transform; animation: cloudMove linear infinite;
-      border-radius: 45% 55% 50% 50%;
-      -webkit-mask-image: radial-gradient(ellipse 70% 60% at 50% 45%, #000 15%, transparent 78%);
-      mask-image: radial-gradient(ellipse 70% 60% at 50% 45%, #000 15%, transparent 78%);
-    }
+    .cloud { position: absolute; left: 0; will-change: transform; animation: cloudMove linear infinite; }
     /* от «целиком за левым краем» до «целиком за правым» — петля без рывка */
     @keyframes cloudMove {
       from { transform: translate3d(calc(-1 * var(--w)), 0, 0); }
@@ -1206,11 +1162,7 @@
     .diag-out { white-space: pre-line; font-family: ui-monospace, Menlo, Consolas, monospace; font-size: 12px; opacity: .9;
       -webkit-user-select: text; user-select: text; line-height: 1.6; }
 
-    #cloudGL {
-      position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none;
-      opacity: 0; transition: opacity 1.1s ease; display: block;
-      image-rendering: auto; image-rendering: smooth;
-    }
+    #cloudGL { position: fixed; inset: 0; width: 100%; height: 100%; z-index: 0; pointer-events: none; opacity: 0; transition: opacity 1.2s ease; }
     #cloudGL.on { opacity: 1; }
 
     /* =====================================================
@@ -1257,3 +1209,71 @@
     /* заголовок качества воздуха: днём — тёмный оттенок ступени, чтобы читался на светлом фоне */
     .aqi-side .aqi-title { color: var(--c); }
     body.day-mode .aqi-side .aqi-title { color: var(--cd); }
+
+    /* Облака-текстуры (рисуются в Web Worker, плывут бесшовной лентой) */
+    #cloudTex { position: fixed; inset: 0; z-index: 0; overflow: hidden; pointer-events: none; }
+    .ctx-set { position: absolute; inset: 0; opacity: 0; transition: opacity 1.4s ease; }
+    .ctx-set.in { opacity: 1; }
+    .ctx-layer { position: absolute; left: 0; display: flex; will-change: transform; animation: ctxSlide linear infinite; }
+    .ctx-layer canvas { flex: none; display: block; }
+    @keyframes ctxSlide { from { transform: translate3d(0, 0, 0); } to { transform: translate3d(-50%, 0, 0); } }
+    @media (prefers-reduced-motion: reduce) {
+      .ctx-layer { animation: none !important; transform: translate3d(-22%, 0, 0); }
+    }
+
+    /* =====================================================
+       Сводка осадков и предупреждения
+       ===================================================== */
+    .summary { display: inline-flex; align-items: center; gap: 8px; margin-top: 12px; padding: 9px 16px; border-radius: 16px;
+      font-size: 15px; font-weight: 600; background: rgba(255,255,255,.14); border: 1px solid rgba(255,255,255,.18);
+      backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); max-width: 100%; text-align: left; }
+    body.day-mode .summary { background: rgba(255,255,255,.6); border-color: rgba(255,255,255,.7); color: #0f172a; }
+
+    .alerts { display: flex; flex-direction: column; gap: 8px; margin: 4px 0 14px; }
+    .alert { display: flex; align-items: center; gap: 12px; padding: 11px 16px; border-radius: 16px; font-size: 14px; font-weight: 600;
+      line-height: 1.3; border: 1px solid; backdrop-filter: blur(10px); -webkit-backdrop-filter: blur(10px); }
+    .alert span:first-child { font-size: 20px; flex-shrink: 0; }
+    .alert.l1 { background: rgba(245,197,24,.18); border-color: rgba(245,197,24,.5); }
+    .alert.l2 { background: rgba(251,140,26,.22); border-color: rgba(251,140,26,.6); }
+    .alert.l3 { background: rgba(239,68,68,.26); border-color: rgba(239,68,68,.7); }
+    body.day-mode .alert { color: #0f172a; }
+    body.day-mode .alert.l1 { background: rgba(250,204,21,.4); }
+    body.day-mode .alert.l2 { background: rgba(251,146,60,.4); }
+    body.day-mode .alert.l3 { background: rgba(248,113,113,.45); }
+
+    /* Дни: раскрытие по часам */
+    .day-row { cursor: pointer; }
+    .day-row .chev { font-size: 11px; opacity: .55; width: 12px; text-align: center; flex-shrink: 0; margin-left: -4px; }
+    .day-row.open { border-bottom-left-radius: 6px; border-bottom-right-radius: 6px; }
+    .day-row .day-pop small { display: block; font-size: 10px; font-weight: 500; opacity: .85; margin-top: 1px; }
+    .day-detail { margin: -2px 0 10px; padding: 12px 10px 4px; border-radius: 0 0 18px 18px; background: var(--card); border: 1px solid var(--border); border-top: none; }
+    body.day-mode .day-detail { background: rgba(255,255,255,.45); border-color: rgba(255,255,255,.6); color: #0f172a; }
+    .day-detail .hourly-scroll { margin-bottom: 6px; padding-bottom: 6px; }
+    .hour-card.mini { min-width: 60px; padding: 10px 6px; border-radius: 14px; }
+    .hour-card.mini .icon { width: 32px; height: 32px; }
+    .day-note { font-size: 12px; color: var(--muted); padding: 6px 6px 8px; line-height: 1.4; }
+    .daily-list > .day-note { background: var(--card); border: 1px solid var(--border); border-radius: 16px; padding: 12px 14px; margin-top: 4px; }
+    body.day-mode .day-note { color: #475569; }
+
+    /* Магнитное поле */
+    .kp-card { background: var(--card); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px); border: 1px solid var(--border);
+      border-radius: 22px; padding: 16px 18px; margin-bottom: 14px; }
+    body.day-mode .kp-card { background: rgba(255,255,255,.55); border-color: rgba(255,255,255,.6); color: #0f172a; }
+    .kp-head { display: flex; justify-content: space-between; align-items: baseline; gap: 10px; }
+    .kp-title { font-size: 13px; color: var(--muted); }
+    .kp-when { font-size: 11px; color: var(--muted); white-space: nowrap; }
+    .kp-row { display: flex; align-items: center; gap: 10px; margin: 10px 0 12px; }
+    .kp-row .lvl-dot { width: 10px; height: 10px; border-radius: 50%; box-shadow: 0 0 10px currentColor; flex-shrink: 0; }
+    .kp-val { font-size: 22px; font-weight: 700; }
+    .kp-text { font-size: 14px; font-weight: 500; opacity: .9; }
+    .kp-scale { display: grid; grid-template-columns: repeat(9, 1fr); gap: 4px; }
+    .kp-scale i { display: block; height: 8px; border-radius: 4px; background: rgba(148,163,184,.28); }
+    .kp-foot { font-size: 11px; color: var(--muted); margin-top: 10px; opacity: .85; }
+    body.day-mode .kp-title, body.day-mode .kp-when, body.day-mode .kp-foot { color: #475569; }
+
+    /* Настройки: «Дополнительно» */
+    details.adv { margin-top: 6px; border-top: 1px solid rgba(148,163,184,.25); }
+    details.adv > summary { cursor: pointer; padding: 14px 0; font-size: 15px; opacity: .8; list-style: none; }
+    details.adv > summary::-webkit-details-marker { display: none; }
+    details.adv > summary::after { content: " ▾"; font-size: 11px; }
+    details.adv[open] > summary::after { content: " ▴"; }

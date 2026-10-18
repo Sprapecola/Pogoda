@@ -39,7 +39,7 @@
   <div class="horizon-glow" id="horizon"></div>
   <div class="celestial sun" id="sun"></div>
   <div class="celestial moon" id="moon"></div>
-  <canvas id="cloudGL" aria-hidden="true"></canvas>
+  <div id="cloudTex" aria-hidden="true"></div>
   <div id="cloudFx" aria-hidden="true"></div>
   <div id="weatherParticles" aria-hidden="true"></div>
   <div class="ptr-indicator" id="ptrIndicator" role="status" aria-live="polite">Потяните, чтобы обновить</div>
@@ -113,25 +113,14 @@
           <button class="settings-opt" type="button" data-k="lang" data-v="en">EN</button>
         </div>
       </div>
-      <div class="settings-row">
-        <span data-ru="Звук погоды" data-en="Weather sound">Звук погоды</span>
-        <div class="settings-opts">
-          <button class="settings-opt" type="button" data-k="sound" data-v="on" data-ru="Вкл" data-en="On">Вкл</button>
-          <button class="settings-opt" type="button" data-k="sound" data-v="off" data-ru="Выкл" data-en="Off">Выкл</button>
-        </div>
-      </div>
-      <div class="settings-row">
-        <span data-ru="Уведомления о дожде" data-en="Rain alerts">Уведомления о дожде</span>
-        <div class="settings-opts">
-          <button class="settings-opt" type="button" id="notifEnableBtn" data-ru="Разрешить" data-en="Allow">Разрешить</button>
-        </div>
-      </div>
       <div class="settings-row" id="installRow" hidden>
         <span data-ru="Приложение" data-en="App">Приложение</span>
         <div class="settings-opts">
           <button class="settings-opt" type="button" id="installBtn" data-ru="Установить" data-en="Install">Установить</button>
         </div>
       </div>
+      <details class="adv">
+        <summary data-ru="Дополнительно" data-en="Advanced">Дополнительно</summary>
       <div class="settings-row">
         <span data-ru="Проверка связи" data-en="Connection test">Проверка связи</span>
         <div class="settings-opts">
@@ -139,6 +128,13 @@
         </div>
       </div>
       <div class="settings-hint diag-out" id="diagOut" hidden></div>
+      <div class="settings-row">
+        <span data-ru="Сбросить кэш приложения" data-en="Reset app cache">Сбросить кэш приложения</span>
+        <div class="settings-opts">
+          <button class="settings-opt" type="button" id="resetBtn" data-ru="Сбросить" data-en="Reset">Сбросить</button>
+        </div>
+      </div>
+      </details>
       <p class="settings-hint" id="iosHint" hidden
          data-ru="Чтобы установить на iPhone: нажмите «Поделиться» → «На экран «Домой»»."
          data-en="To install on iPhone: tap Share → Add to Home Screen."></p>
