@@ -1277,3 +1277,24 @@
     details.adv > summary::-webkit-details-marker { display: none; }
     details.adv > summary::after { content: " ▾"; font-size: 11px; }
     details.adv[open] > summary::after { content: " ▴"; }
+
+
+    /* =====================================================
+       Графики осадков, прогулка, полоски температуры
+       ===================================================== */
+    .precip-card, .walk-card { background: var(--card); backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--border); border-radius: 22px; padding: 16px 18px; margin-bottom: 14px; }
+    body.day-mode .precip-card, body.day-mode .walk-card { background: rgba(255,255,255,.55); border-color: rgba(255,255,255,.6); color: #0f172a; }
+    .chart-title { font-size: 13px; color: var(--muted); margin-bottom: 8px; }
+    body.day-mode .chart-title, body.day-mode .precip-foot, body.day-mode .walk-sub { color: #475569; }
+    .precip-none { font-size: 15px; font-weight: 600; }
+    .precip-card .chart-wrap svg { height: 110px; }
+    .precip-foot { font-size: 12px; color: var(--muted); margin-top: 4px; }
+    .walk-time { font-size: 22px; font-weight: 700; }
+    .walk-sub { font-size: 14px; color: var(--muted); margin-top: 4px; }
+
+    .day-row { gap: 8px; padding: 14px 14px; }
+    .day-row .day-name { width: 66px; }
+    .day-row .day-pop { width: 46px; }
+    .day-range { flex: 1; min-width: 30px; height: 6px; position: relative; border-radius: 3px; background: rgba(148,163,184,.28); }
+    .day-range i { position: absolute; top: 0; bottom: 0; border-radius: 3px; }

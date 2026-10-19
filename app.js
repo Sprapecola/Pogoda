@@ -1011,6 +1011,110 @@
       <div class="kp-foot">NOAA SWPC</div></div>`;
   }
 
+  // =====================================================================
+  //  Графики осадков, полоски температуры и «лучшее время для прогулки»
+  // =====================================================================
+  // Цвет по температуре (для полосок в списке дней): синий → зелёный → жёлтый → оранжевый → красный
+  function tempColor(c) {
+    const stops = [[-15, [96, 165, 250]], [0, [56, 189, 248]], [10, [52, 211, 153]], [20, [250, 204, 21]], [30, [251, 146, 60]], [40, [239, 68, 68]]];
+    const rgb = a => "rgb(" + a.join(",") + ")";
+    if (c <= stops[0][0]) return rgb(stops[0][1]);
+    for (let i = 1; i < stops.length; i++) {
+      if (c <= stops[i][0]) {
+        const a = stops[i - 1], b = stops[i], f = (c - a[0]) / (b[0] - a[0]);
+        return rgb(a[1].map((v, k) => Math.round(v + (b[1][k] - v) * f)));
+      }
+    }
+    return rgb(stops[stops.length - 1][1]);
+  }
+
+  // Столбики осадков на ближайшие 24 часа: сразу видно, когда польёт и насколько сильно
+  function precipChart(data) {
+    const now = Math.floor(Date.now() / 1000), off = data.tz;
+    const hrs = data.hourly.filter(h => (h.step || 1) === 1 && h.dt > now - 1800 && h.dt <= now + 24 * 3600).slice(0, 25);
+    if (hrs.length < 6 || !hrs.some(h => h.precip != null)) return "";
+    const vals = hrs.map(h => h.precip || 0);
+    const total = vals.reduce((a, v) => a + v, 0);
+    const title = `<div class="chart-title">☔ ${t("Осадки по часам", "Precipitation by hour")}</div>`;
+    if (total < 0.1) {
+      return `<div class="precip-card">${title}<div class="precip-none">${t("В ближайшие 24 часа осадков не ожидается", "No precipitation expected in the next 24 hours")}</div></div>`;
+    }
+    const W = 320, H = 100, padB = 18, top = 16, n = vals.length, bw = (W - 8) / n;
+    const max = Math.max(2, Math.max.apply(null, vals));
+    const color = v => (v < 0.5 ? "#7dd3fc" : v < 2.5 ? "#38bdf8" : v < 8 ? "#2563eb" : "#7c3aed");
+    let bars = "", labels = "", peakI = 0;
+    vals.forEach((v, i) => {
+      if (v > vals[peakI]) peakI = i;
+      const x = 4 + i * bw, h = v > 0 ? Math.max(2.5, (v / max) * (H - padB - top)) : 0;
+      if (v > 0) bars += `<rect x="${(x + 1).toFixed(1)}" y="${(H - padB - h).toFixed(1)}" width="${(bw - 2).toFixed(1)}" height="${h.toFixed(1)}" rx="2" fill="${color(v)}"/>`;
+      if (i % 3 === 0) labels += `<text x="${(x + bw / 2).toFixed(1)}" y="${H - 4}" text-anchor="middle" font-size="9" fill="currentColor" opacity=".6">${i === 0 ? t("сейч.", "now") : fmtHour(hrs[i].dt, off).slice(0, 2)}</text>`;
+    });
+    const px = 4 + peakI * bw + bw / 2, ph = (vals[peakI] / max) * (H - padB - top);
+    const peak = `<text x="${Math.min(W - 18, Math.max(18, px)).toFixed(1)}" y="${(H - padB - ph - 4).toFixed(1)}" text-anchor="middle" font-size="10" font-weight="700" fill="currentColor">${fmtMm(vals[peakI])}</text>`;
+    const base = `<line x1="4" y1="${H - padB}" x2="${W - 4}" y2="${H - padB}" stroke="currentColor" stroke-opacity=".2"/>`;
+    return `<div class="precip-card">${title}
+      <div class="chart-wrap"><svg viewBox="0 0 ${W} ${H}" role="img" aria-label="${t("Осадки по часам на 24 часа", "Hourly precipitation for 24 hours")}">${base}${bars}${peak}${labels}</svg></div>
+      <div class="precip-foot">${t("Всего за 24 часа: ", "Total over 24 h: ")}${fmtMm(total)}</div></div>`;
+  }
+
+  // Лучшее окно для прогулки: светлое время, без осадков, комфортная температура (сегодня, а если не нашлось — завтра)
+  function walkWindow(data) {
+    const now = Math.floor(Date.now() / 1000), off = data.tz;
+    const dayKey = ts => new Date((ts + off) * 1000).toISOString().slice(0, 10);
+    const todayKey = dayKey(now), tomorrowKey = dayKey(now + 86400);
+    const pool = data.hourly.filter(h => (h.step || 1) === 1 && h.dt >= now - 1800 && h.dt <= now + 40 * 3600 && h.isDay);
+    const score = h => {
+      if (isWet(h)) return -1;
+      const k = kindOf(h.code);
+      if (k === "fog") return 30;                                  // в тумане гулять можно, но не лучшее время
+      let sc = 100;
+      sc -= Math.min(20, Math.abs(h.temp - 20) * 0.7);             // чем ближе к приятным ~20°, тем лучше
+      if (h.temp < 0) sc -= Math.min(30, -h.temp * 1.2);           // мороз: дополнительный, но мягкий штраф (зимой гуляют тоже)
+      else if (h.temp > 26) sc -= (h.temp - 26) * 5;               // жара: штраф жёстче
+      if (k === "clear") sc += 10; else if (h.code === 2) sc += 5;
+      return sc;
+    };
+    const bestFor = key => {
+      const hrs = pool.filter(h => dayKey(h.dt) === key);
+      let best = null, run = [];
+      const flush = () => {
+        if (run.length >= 2) {
+          // длинное окно режем до лучших 4 часов подряд
+          const len = Math.min(4, run.length);
+          for (let i = 0; i + len <= run.length; i++) {
+            const w = run.slice(i, i + len), avg = w.reduce((a, h) => a + score(h), 0) / len;
+            if (!best || avg > best.avg + 0.01) best = { avg, hrs: w };
+          }
+        }
+        run = [];
+      };
+      hrs.forEach(h => {
+        const ok = score(h) >= 55;
+        if (ok && (!run.length || h.dt - run[run.length - 1].dt === 3600)) run.push(h);
+        else { flush(); if (ok) run.push(h); }
+      });
+      flush();
+      return best;
+    };
+    let day = "today", b = bestFor(todayKey);
+    if (!b) { day = "tomorrow"; b = bestFor(tomorrowKey); }
+    if (!b) return null;
+    const mid = b.hrs[Math.floor(b.hrs.length / 2)];
+    return { day, from: b.hrs[0].dt, to: b.hrs[b.hrs.length - 1].dt + 3600, temp: b.hrs.reduce((a, h) => a + h.temp, 0) / b.hrs.length, code: mid.code };
+  }
+  function walkCard(data) {
+    const w = walkWindow(data), off = data.tz, now = Math.floor(Date.now() / 1000);
+    let body;
+    if (!w) {
+      body = `<div class="walk-time">${t("Хорошего окна нет", "No good window")}</div><div class="walk-sub">${t("В ближайшие сутки светлого времени без осадков не найдено", "No dry daylight hours found in the next 24 hours")}</div>`;
+    } else {
+      const range = fmtHM(w.from, off) + "–" + fmtHM(w.to, off);
+      const when = w.day === "tomorrow" ? t("Завтра ", "Tomorrow ") + range : (w.from <= now + 1800 ? t("Прямо сейчас, до ", "Right now, until ") + fmtHM(w.to, off) : range);
+      body = `<div class="walk-time">${when}</div><div class="walk-sub">${describe(w.code)}, ${toTemp(w.temp)}${tempSym()}${t(", без осадков", ", dry")}</div>`;
+    }
+    return `<div class="walk-card anim-fade-up delay-2"><div class="chart-title">🚶 ${t("Лучшее время для прогулки", "Best time for a walk")}</div>${body}</div>`;
+  }
+
   // Ряд для «по часам»: «сейчас» + каждые N часов из почасовых данных.
   // (раньше при шаге 3 показывались 8 подряд идущих ЧАСОВ, а не слотов через 3 часа)
   function hourlyPoints(data, step) {
@@ -1046,7 +1150,9 @@
   }
 
   function dayRows(data) {
-    const rows = data.daily.slice(0, state.dayRange).map((d, i) => {
+    const sel = data.daily.slice(0, state.dayRange);
+    const gmin = Math.min.apply(null, sel.map(x => x.min)), gmax = Math.max.apply(null, sel.map(x => x.max)), span = Math.max(1, gmax - gmin);
+    const rows = sel.map((d, i) => {
       const dd = new Date(d.date + "T12:00:00Z");
       const name = i === 0 ? t("Сегодня", "Today") : i === 1 ? t("Завтра", "Tomorrow") : dayName(dd.getUTCDay());
       const dateStr = dd.getUTCDate() + " " + monthName(dd.getUTCMonth());
@@ -1057,6 +1163,7 @@
         <div class="day-name">${name}<span style="display:block;font-size:11px;opacity:0.65;font-weight:400">${dateStr}</span></div>
         <div class="icon">${iconSvg(d.code, true)}</div>
         <div class="day-pop">${pop}${mm}</div>
+        <div class="day-range" aria-hidden="true"><i style="left:${Math.min(100 - Math.max(12, (d.max - d.min) / span * 100), (d.min - gmin) / span * 100).toFixed(1)}%;width:${Math.max(12, (d.max - d.min) / span * 100).toFixed(1)}%;background:linear-gradient(90deg,${tempColor(d.min)},${tempColor(d.max)})"></i></div>
         <div class="temps"><span class="max">${toTemp(d.max)}°</span> <span class="min">${toTemp(d.min)}°</span></div>
         <div class="chev">${open ? "▴" : "▾"}</div></div>${open ? dayDetail(data, d) : ""}`;
     }).join("");
@@ -1231,6 +1338,8 @@
         <div class="wear-text">${wearText(cur.feels, kind, cur.windSpeed || 0)}</div>
       </div>
 
+      ${walkCard(data)}
+
       <div id="pollenSlot" class="anim-fade-up delay-2">${pollenCard(data)}</div>
 
       <div class="aqi-card anim-fade-up delay-2" id="aqiSlot">${aqiInner(data)}</div>
@@ -1278,6 +1387,8 @@
 
       <div class="section-title anim-fade-up delay-3">🕒 ${t("По часам", "Hourly")}</div>
       <div class="hourly-scroll" id="hourly">${hourCards(data)}</div>
+
+      <div id="precipSlot" class="anim-fade-up delay-3">${precipChart(data)}</div>
 
       <div class="section-title anim-fade-up delay-4" id="dailyTitle">📅 ${t("На", "For")} ${shownDays} ${t("дней", "days")}</div>
       <div class="interval-tabs anim-fade-up delay-4" id="dayTabs">
