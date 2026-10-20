@@ -1381,8 +1381,8 @@
 
       <div class="radar-card anim-fade-up delay-3">
         <div style="font-size:13px;color:var(--muted);margin-bottom:10px">📡 ${t("Карта осадков", "Precipitation radar")}</div>
-        <a class="radar-btn" href="https://www.rainviewer.com/map.html?loc=${city.lat},${city.lon},8" target="_blank" rel="noopener">
-          ${t("Открыть радар RainViewer", "Open RainViewer radar")}</a>
+        <button type="button" class="radar-btn" data-act="radar">${t("Открыть карту осадков", "Open precipitation radar")}</button>
+        <a class="radar-alt" href="https://www.rainviewer.com/map.html?loc=${city.lat},${city.lon},8" target="_blank" rel="noopener">${t("или на сайте RainViewer", "or on rainviewer.com")}</a>
       </div>
 
       <div class="section-title anim-fade-up delay-3">🕒 ${t("По часам", "Hourly")}</div>
@@ -2088,6 +2088,7 @@
     } else if (el.dataset.act === "fav") toggleFavorite();
     else if (el.dataset.act === "retry") loadCity(state.city || DEFAULT_CITY, true);
     else if (el.dataset.act === "refresh") manualRefresh();
+    else if (el.dataset.act === "radar") { if (state.city && state.data) Radar.open(state.city, state.data.tz); }
   });
 
   content.addEventListener("keydown", e => {
@@ -2172,13 +2173,19 @@
       ["Open-Meteo " + t("воздух", "air"), "https://air-quality-api.open-meteo.com/v1/air-quality?latitude=" + lat + "&longitude=" + lon + "&current=european_aqi"],
       ["Open-Meteo " + t("поиск", "search"), "https://geocoding-api.open-meteo.com/v1/search?name=Moscow&count=1"]
     ];
+    tests.push([t("Радар RainViewer", "RainViewer radar"), "https://api.rainviewer.com/public/weather-maps.json"]);
+    tests.push([t("Карта OpenStreetMap", "OpenStreetMap map"), "https://tile.openstreetmap.org/0/0/0.png"]);
     tests.push(["Open-Meteo (" + t("зеркало", "mirror") + ")", OM_MIRROR + "/v1/forecast?latitude=" + lat + "&longitude=" + lon + "&current=temperature_2m"]);
     tests.push(["MET Norway", "https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=" + Number(lat).toFixed(4) + "&lon=" + Number(lon).toFixed(4)]);
     if (WX.OWM_KEY) tests.push(["OpenWeatherMap", "https://api.openweathermap.org/data/2.5/weather?lat=" + lat + "&lon=" + lon + "&appid=" + WX.OWM_KEY + "&units=metric"]);
     const ms = t("мс", "ms");
     const lines = await Promise.all(tests.map(async ([name, url]) => {
       const t0 = performance.now();
-      try { await getJson(url, 10000); return "✓ " + name + " — " + Math.round(performance.now() - t0) + " " + ms; }
+      try {
+        if (/\.png$/.test(url)) {   // плитка карты — это картинка, а не JSON
+          await new Promise((res, rej) => { const im = new Image(); const to = setTimeout(() => rej(fail("таймаут")), 10000); im.onload = () => { clearTimeout(to); res(); }; im.onerror = () => { clearTimeout(to); rej(fail("сеть")); }; im.src = url; });
+        } else await getJson(url, 10000);
+        return "✓ " + name + " — " + Math.round(performance.now() - t0) + " " + ms; }
       catch (e) { return "✗ " + name + " — " + reasonOf(e) + " (" + Math.round(performance.now() - t0) + " " + ms + ")"; }
     }));
     out.textContent = lines.join("\n") + "\n" + t("Браузер сообщает: ", "Browser reports: ") + (navigator.onLine === false ? t("нет сети", "offline") : t("сеть есть", "online"));
@@ -2277,6 +2284,259 @@
         lastY = y; ticking = false;
       });
     }, { passive: true });
+  })();
+
+  // =====================================================================
+  //  Карта осадков: своя лёгкая карта (тайлы OpenStreetMap) + анимированный радар RainViewer.
+  //  Без сторонних библиотек: перетаскивание, масштаб щипком / колесом / кнопками, кадры радара с подписью времени.
+  // =====================================================================
+  const Radar = (function () {
+    const TILE = 256, MIN_Z = 3, MAX_Z = 9, RADAR_MAX_Z = 7;   // тайлы радара есть только до 7-го масштаба; дальше растягиваем
+    const MAPS_URL = "https://api.rainviewer.com/public/weather-maps.json";
+    const baseUrl = (z, x, y) => "https://tile.openstreetmap.org/" + z + "/" + x + "/" + y + ".png";
+
+    let root = null, view, world, baseLayer, radarLayer, marker, slider, playBtn, timeEl, msgEl;
+    const S = { open: false, lat: 0, lon: 0, tz: 0, z: 6, cx: 0, cy: 0, w: 0, h: 0, clat: 0, clon: 0, frames: [], idx: 0, host: "", playing: false, timer: 0, pushed: false };
+    const baseTiles = new Map();
+    const frameLayers = new Map();
+
+    const worldSize = z => TILE * Math.pow(2, z);
+    const lonToX = (lon, z) => (lon + 180) / 360 * worldSize(z);
+    const latToY = (lat, z) => { const r = lat * Math.PI / 180; return (1 - Math.log(Math.tan(r) + 1 / Math.cos(r)) / Math.PI) / 2 * worldSize(z); };
+    const xToLon = (x, z) => x / worldSize(z) * 360 - 180;
+    const yToLat = (y, z) => { const n = Math.PI - 2 * Math.PI * y / worldSize(z); return 180 / Math.PI * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n))); };
+    const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+
+    function build() {
+      if (root) return;
+      root = document.createElement("div");
+      root.className = "radar-modal";
+      root.setAttribute("role", "dialog");
+      root.setAttribute("aria-modal", "true");
+      root.innerHTML = `
+        <div class="rm-head"><div class="rm-title"></div><button type="button" class="rm-close"></button></div>
+        <div class="rm-view">
+          <div class="rm-world"><div class="rm-base"></div><div class="rm-radar"></div><div class="rm-marker"></div></div>
+          <div class="rm-zoom"><button type="button" data-z="1" aria-label="+">+</button><button type="button" data-z="-1" aria-label="−">−</button></div>
+          <div class="rm-msg" hidden></div>
+        </div>
+        <div class="rm-bar"><button type="button" class="rm-play"></button><input type="range" class="rm-slider" min="0" max="0" value="0" step="1" /><div class="rm-time">—</div></div>
+        <div class="rm-foot"></div>`;
+      document.body.appendChild(root);
+      view = root.querySelector(".rm-view"); world = root.querySelector(".rm-world");
+      baseLayer = root.querySelector(".rm-base"); radarLayer = root.querySelector(".rm-radar"); marker = root.querySelector(".rm-marker");
+      slider = root.querySelector(".rm-slider"); playBtn = root.querySelector(".rm-play"); timeEl = root.querySelector(".rm-time"); msgEl = root.querySelector(".rm-msg");
+
+      root.querySelector(".rm-close").addEventListener("click", close);
+      root.querySelectorAll(".rm-zoom button").forEach(b => b.addEventListener("click", () => zoomAt(Number(b.dataset.z), S.w / 2, S.h / 2)));
+      playBtn.addEventListener("click", () => (S.playing ? pause() : play()));
+      slider.addEventListener("input", () => { pause(); setFrame(Number(slider.value)); });
+      document.addEventListener("keydown", e => { if (S.open && e.key === "Escape") close(); });
+      window.addEventListener("resize", () => { if (S.open) { measure(); renderAll(); } });
+      window.addEventListener("popstate", () => { if (S.open) { S.pushed = false; hide(); } });
+
+      // ----- жесты: перетаскивание одним пальцем, щипок двумя, двойное касание -----
+      const ptrs = new Map();
+      let g = null, lastTap = 0;
+      const mid = () => { const a = Array.from(ptrs.values()); return { x: (a[0].x + a[1].x) / 2, y: (a[0].y + a[1].y) / 2, d: Math.hypot(a[0].x - a[1].x, a[0].y - a[1].y) }; };
+      const local = (x, y) => { const r = view.getBoundingClientRect(); return { x: x - r.left, y: y - r.top }; };
+      function startGesture() {
+        if (ptrs.size === 1) { const a = Array.from(ptrs.values())[0]; g = { type: "pan", sx: a.x, sy: a.y, dx: 0, dy: 0 }; }
+        else if (ptrs.size >= 2) { const m = mid(); const o = local(m.x, m.y); g = { type: "pinch", mx: m.x, my: m.y, ox: o.x, oy: o.y, d0: Math.max(1, m.d), s: 1, dx: 0, dy: 0 }; }
+        else g = null;
+      }
+      function commit() {
+        if (!g) return;
+        world.style.transition = "none";
+        if (g.type === "pan") {
+          if (Math.abs(g.dx) + Math.abs(g.dy) > 0) { S.cx -= g.dx; S.cy -= g.dy; syncCenter(); }
+        } else {
+          const dz = Math.round(Math.log2(g.s)), nz = clamp(S.z + dz, MIN_Z, MAX_Z);
+          if (nz !== S.z) zoomTo(nz, g.ox, g.oy, g.dx, g.dy);
+          else { S.cx -= g.dx; S.cy -= g.dy; syncCenter(); }
+        }
+        world.style.transform = ""; world.style.transformOrigin = "";
+        g = null;
+        renderAll();
+      }
+      const isControl = e => !!(e.target.closest && e.target.closest(".rm-zoom, .rm-msg"));   // кнопки и сообщение — не часть жестов карты
+      view.addEventListener("pointerdown", e => {
+        if (isControl(e)) return;
+        try { view.setPointerCapture(e.pointerId); } catch (err) { /* синтетические события */ }
+        if (g) commit();
+        ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        startGesture();
+      });
+      view.addEventListener("pointermove", e => {
+        if (!ptrs.has(e.pointerId) || !g) return;
+        ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+        if (g.type === "pan") {
+          g.dx = e.clientX - g.sx; g.dy = e.clientY - g.sy;
+          world.style.transform = "translate(" + g.dx + "px," + g.dy + "px)";
+        } else if (ptrs.size >= 2) {
+          const m = mid();
+          g.s = clamp(m.d / g.d0, 0.3, 4); g.dx = m.x - g.mx; g.dy = m.y - g.my;
+          world.style.transformOrigin = g.ox + "px " + g.oy + "px";
+          world.style.transform = "translate(" + g.dx + "px," + g.dy + "px) scale(" + g.s + ")";
+        }
+      });
+      const up = e => {
+        if (!ptrs.has(e.pointerId)) return;
+        const moved = g && g.type === "pan" ? Math.abs(g.dx) + Math.abs(g.dy) : 99;
+        commit();
+        ptrs.delete(e.pointerId);
+        if (ptrs.size === 0 && e.type === "pointerup" && moved < 6) {   // короткое касание: два подряд — приближение
+          const now = Date.now(), o = local(e.clientX, e.clientY);
+          if (now - lastTap < 320) { zoomAt(1, o.x, o.y); lastTap = 0; } else lastTap = now;
+        }
+        startGesture();
+      };
+      view.addEventListener("pointerup", up);
+      view.addEventListener("pointercancel", up);
+      view.addEventListener("dblclick", e => { if (isControl(e)) return; const o = local(e.clientX, e.clientY); zoomAt(1, o.x, o.y); });
+      let wheelAt = 0;
+      view.addEventListener("wheel", e => {
+        if (isControl(e)) return;
+        e.preventDefault();
+        const now = Date.now(); if (now - wheelAt < 220) return; wheelAt = now;
+        const o = local(e.clientX, e.clientY); zoomAt(e.deltaY < 0 ? 1 : -1, o.x, o.y);
+      }, { passive: false });
+    }
+
+    function texts() {
+      root.setAttribute("aria-label", t("Карта осадков", "Precipitation radar"));
+      root.querySelector(".rm-title").textContent = "📡 " + t("Карта осадков", "Precipitation radar");
+      root.querySelector(".rm-close").textContent = "✕";
+      root.querySelector(".rm-close").setAttribute("aria-label", t("Закрыть", "Close"));
+      playBtn.setAttribute("aria-label", t("Пуск / пауза", "Play / pause"));
+      root.querySelector(".rm-foot").innerHTML = t("Чем насыщеннее синий, тем сильнее осадки", "The deeper the blue, the heavier the precipitation") +
+        ` · © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a> · ${t("Радар", "Radar")}: <a href="https://www.rainviewer.com/" target="_blank" rel="noopener">RainViewer</a>`;
+    }
+
+    // ----- координаты и отрисовка -----
+    function measure() { S.w = view.clientWidth || 360; S.h = view.clientHeight || 500; }
+    function syncCenter() { S.cy = clamp(S.cy, 0, worldSize(S.z)); S.clon = xToLon(S.cx, S.z); S.clat = yToLat(S.cy, S.z); }
+    function setCenter(lat, lon) { S.clat = lat; S.clon = lon; S.cx = lonToX(lon, S.z); S.cy = latToY(lat, S.z); }
+    function zoomTo(nz, sx, sy, shiftX, shiftY) {
+      // точка под пальцем остаётся на месте: переводим её в координаты, меняем масштаб и пересчитываем центр
+      const lon = xToLon(S.cx + (sx - S.w / 2), S.z), lat = yToLat(S.cy + (sy - S.h / 2), S.z);
+      S.z = nz;
+      S.cx = lonToX(lon, nz) - (sx + (shiftX || 0) - S.w / 2);
+      S.cy = latToY(lat, nz) - (sy + (shiftY || 0) - S.h / 2);
+      syncCenter();
+    }
+    function zoomAt(delta, sx, sy) {
+      const nz = clamp(S.z + delta, MIN_Z, MAX_Z);
+      if (nz === S.z) return;
+      zoomTo(nz, sx, sy, 0, 0);
+      renderAll();
+    }
+
+    function syncTiles(container, tiles, tz, urlFn) {
+      const size = TILE * Math.pow(2, S.z - tz);          // для радара на масштабах выше 7 плитка просто крупнее
+      const x0 = Math.round(S.cx - S.w / 2), y0 = Math.round(S.cy - S.h / 2), n = Math.pow(2, tz);
+      const tx0 = Math.floor(x0 / size), tx1 = Math.floor((x0 + S.w) / size);
+      const ty0 = Math.max(0, Math.floor(y0 / size)), ty1 = Math.min(n - 1, Math.floor((y0 + S.h) / size));
+      const need = new Set();
+      for (let ty = ty0; ty <= ty1; ty++) {
+        for (let tx = tx0; tx <= tx1; tx++) {
+          const wx = ((tx % n) + n) % n, key = tz + "/" + wx + "/" + ty + "@" + tx;
+          need.add(key);
+          let img = tiles.get(key);
+          if (!img) {
+            img = new Image();
+            img.className = "rm-tile"; img.alt = ""; img.draggable = false; img.decoding = "async";
+            img.onerror = () => { img.style.visibility = "hidden"; };
+            img.src = urlFn(tz, wx, ty);
+            container.appendChild(img);
+            tiles.set(key, img);
+          }
+          img.style.width = img.style.height = size + "px";
+          img.style.left = (tx * size - x0) + "px"; img.style.top = (ty * size - y0) + "px";
+        }
+      }
+      tiles.forEach((img, key) => { if (!need.has(key)) { img.remove(); tiles.delete(key); } });
+    }
+    const radarUrl = f => (tz, x, y) => S.host + f.path + "/256/" + tz + "/" + x + "/" + y + "/2/1_1.png";
+    function renderAll() {
+      if (!S.open) return;
+      syncTiles(baseLayer, baseTiles, S.z, baseUrl);
+      frameLayers.forEach((fl, i) => syncTiles(fl.div, fl.tiles, Math.min(S.z, RADAR_MAX_Z), radarUrl(S.frames[i])));
+      const x0 = Math.round(S.cx - S.w / 2), y0 = Math.round(S.cy - S.h / 2);
+      marker.style.left = (lonToX(S.lon, S.z) - x0) + "px";
+      marker.style.top = (latToY(S.lat, S.z) - y0) + "px";
+    }
+
+    // ----- кадры радара -----
+    function ensureFrame(i) {
+      if (frameLayers.has(i) || !S.frames[i]) return;
+      const div = document.createElement("div");
+      div.className = "rm-frame";
+      radarLayer.appendChild(div);
+      frameLayers.set(i, { div, tiles: new Map() });
+      syncTiles(div, frameLayers.get(i).tiles, Math.min(S.z, RADAR_MAX_Z), radarUrl(S.frames[i]));
+    }
+    function frameLabel(f) {
+      const dm = Math.round((f.time - Date.now() / 1000) / 60), a = Math.abs(dm);
+      const rel = a < 6 ? t("сейчас", "now") : (dm < 0 ? "−" : "+") + (a >= 60 ? Math.floor(a / 60) + t(" ч", " h") + (a % 60 ? " " + (a % 60) + t(" мин", " min") : "") : a + t(" мин", " min"));
+      return fmtHM(f.time, S.tz) + " · " + rel + (f.future ? " · " + t("прогноз", "forecast") : "");
+    }
+    function setFrame(i) {
+      if (!S.frames.length) return;
+      S.idx = clamp(i, 0, S.frames.length - 1);
+      ensureFrame(S.idx);
+      frameLayers.forEach((fl, k) => fl.div.classList.toggle("on", k === S.idx));
+      slider.value = String(S.idx);
+      timeEl.textContent = frameLabel(S.frames[S.idx]);
+    }
+    function pause() { S.playing = false; clearTimeout(S.timer); playBtn.textContent = "▶"; }
+    function play() {
+      if (S.frames.length < 2) return;
+      S.playing = true; playBtn.textContent = "⏸";
+      S.frames.forEach((_, i) => ensureFrame(i));          // подгружаем все кадры, чтобы анимация не мигала
+      const tick = () => {
+        if (!S.playing) return;
+        const next = (S.idx + 1) % S.frames.length;
+        setFrame(next);
+        S.timer = setTimeout(tick, next === S.frames.length - 1 ? 1600 : 650);
+      };
+      S.timer = setTimeout(tick, 400);
+    }
+
+    function showMsg(text, withLink) {
+      msgEl.hidden = false;
+      msgEl.innerHTML = esc(text) + (withLink ? ` <a href="https://www.rainviewer.com/map.html?loc=${S.lat},${S.lon},7" target="_blank" rel="noopener">${t("Открыть на rainviewer.com", "Open on rainviewer.com")}</a>` : "");
+    }
+
+    async function open(city, tz) {
+      build(); texts();
+      Object.assign(S, { lat: Number(city.lat), lon: Number(city.lon), tz: tz || 0, z: 6, frames: [], idx: 0 });
+      pause(); baseTiles.forEach(i => i.remove()); baseTiles.clear(); frameLayers.clear(); radarLayer.innerHTML = "";
+      msgEl.hidden = true; slider.max = "0"; slider.value = "0"; timeEl.textContent = "—"; playBtn.textContent = "▶";
+      root.classList.add("open"); S.open = true;
+      try { history.pushState({ radar: 1 }, ""); S.pushed = true; } catch (e) { /* без истории */ }
+      measure(); setCenter(S.lat, S.lon); renderAll();   // сразу, до загрузки кадров: иначе первые плитки радара запросились бы не там
+      try {
+        const m = await getJson(MAPS_URL, 9000);
+        if (!S.open) return;
+        const past = (m && m.radar && m.radar.past) || [], fut = (m && m.radar && m.radar.nowcast) || [];
+        S.host = m.host || "https://tilecache.rainviewer.com";
+        S.frames = past.map(f => ({ time: f.time, path: f.path, future: false })).concat(fut.map(f => ({ time: f.time, path: f.path, future: true })));
+        if (!S.frames.length) throw fail("нет кадров");
+        slider.max = String(S.frames.length - 1);
+        setFrame(Math.max(0, past.length - 1));            // открываем на самом свежем наблюдении
+        renderAll();
+      } catch (e) {
+        if (S.open) showMsg(t("Данные радара сейчас недоступны (" + reasonOf(e) + "). Карта работает без осадков.", "Radar data is unavailable right now (" + reasonOf(e) + "). The map works without precipitation."), true);
+      }
+    }
+    function hide() { pause(); S.open = false; if (root) root.classList.remove("open"); }
+    function close() {
+      if (!S.open) return;
+      hide();
+      if (S.pushed) { S.pushed = false; try { history.back(); } catch (e) {} }
+    }
+    return { open, close, isOpen: () => S.open };
   })();
 
   // =====================================================================
