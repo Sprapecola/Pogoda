@@ -1,0 +1,109 @@
+# Копия прогноза Open-Meteo для приложения.
+#
+# Зачем: если телефон не может достучаться до api.open-meteo.com, прогноз раз в час забирает GitHub
+# и кладёт файлы в папку data/ рядом с приложением. Телефон читает их с того же адреса, что и само приложение.
+#
+# Как включить (подробно в README): сохраните этот текст в репозитории как файл
+#   .github/workflows/weather.yml
+# затем откройте вкладку Actions и один раз запустите «Обновление прогноза» (Run workflow).
+# Города берутся из data/cities.json.
+
+name: Обновление прогноза
+
+on:
+  schedule:
+    - cron: "17 * * * *"     # каждый час в :17
+  workflow_dispatch: {}       # и вручную: вкладка Actions → Run workflow
+
+permissions:
+  contents: write
+  pages: write
+
+concurrency:
+  group: weather
+  cancel-in-progress: false
+
+jobs:
+  fetch:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Загрузить прогноз из Open-Meteo
+        run: |
+          python3 - <<'PY'
+          import json, os, sys, time, urllib.request, urllib.error
+
+          HOST = "https://api.open-meteo.com/v1/forecast"
+          BASE = ("&timezone=auto&wind_speed_unit=ms"
+                  "&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,weather_code,pressure_msl,wind_speed_10m,wind_direction_10m,wind_gusts_10m,visibility"
+                  "&hourly=temperature_2m,weather_code,is_day,precipitation_probability,precipitation"
+                  "&daily=weather_code,temperature_2m_max,temperature_2m_min,uv_index_max,precipitation_probability_max,precipitation_sum,wind_gusts_10m_max,sunrise,sunset"
+                  "&past_days=1&forecast_days=16")
+          LIGHT = "&past_hours=1&forecast_hours=120"
+
+          def get(url):
+              req = urllib.request.Request(url, headers={"User-Agent": "weather-pwa-github-action"})
+              with urllib.request.urlopen(req, timeout=40) as r:
+                  return json.load(r)
+
+          def fetch(lat, lon):
+              q = "?latitude=%s&longitude=%s" % (lat, lon) + BASE
+              for attempt in range(4):
+                  for extra in (LIGHT, ""):
+                      try:
+                          return get(HOST + q + extra)
+                      except urllib.error.HTTPError as e:
+                          print("HTTP", e.code, "облегчённый запрос" if extra else "полный запрос")
+                          if e.code == 400 and extra:
+                              continue          # сервер не принял облегчённые параметры — пробуем полный запрос
+                          break
+                      except Exception as e:
+                          print("ошибка:", e)
+                          break
+                  time.sleep(8 * (attempt + 1))
+              return None
+
+          os.makedirs("data", exist_ok=True)
+          cities = json.load(open("data/cities.json", encoding="utf-8"))
+          try:
+              old = {c["id"]: c for c in json.load(open("data/index.json", encoding="utf-8"))}
+          except Exception:
+              old = {}
+          now = int(time.time())
+          index = []
+          for c in cities:
+              m = fetch(c["lat"], c["lon"])
+              fn = "om_%s.json" % c["id"]
+              if m and "current" in m and "daily" in m:
+                  with open("data/" + fn, "w", encoding="utf-8") as f:
+                      json.dump({"fetched": now, "lat": c["lat"], "lon": c["lon"], "m": m}, f, ensure_ascii=False, separators=(",", ":"))
+                  index.append({"id": c["id"], "name": c["name"], "lat": c["lat"], "lon": c["lon"], "file": fn, "fetched": now})
+                  print("OK:", c["name"])
+              elif c["id"] in old:
+                  index.append(old[c["id"]])
+                  print("не удалось, оставляю прежнюю копию:", c["name"])
+              else:
+                  print("не удалось, копии нет:", c["name"])
+          with open("data/index.json", "w", encoding="utf-8") as f:
+              json.dump(index, f, ensure_ascii=False, separators=(",", ":"))
+          if cities and not any(i["fetched"] == now for i in index):
+              sys.exit(1)       # ни один город не обновился — пусть запуск будет помечен как неудачный
+          PY
+
+      - name: Сохранить изменения
+        run: |
+          git config user.name "weather-bot"
+          git config user.email "weather-bot@users.noreply.github.com"
+          git add data
+          if git diff --cached --quiet; then
+            echo "Без изменений"
+          else
+            git commit -m "Обновление прогноза"
+            git push
+          fi
+
+      - name: Пересобрать GitHub Pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh api -X POST "repos/${{ github.repository }}/pages/builds" || echo "Pages пересоберётся сам"

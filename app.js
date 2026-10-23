@@ -50,6 +50,7 @@
     dayRange: 7,
     effectsKey: null,
     fxCode: undefined,
+    lastFetchAt: 0,
     phase: "day",
     lastResults: []
   };
@@ -210,7 +211,11 @@
   // =====================================================================
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const fail = code => Object.assign(new Error(code), { code });
-  const reasonOf = e => (e && e.code) || (e && e.name === "AbortError" ? "таймаут" : "ошибка");
+  const reasonOf = e => {
+    if (!e) return "ошибка";
+    if (e.name === "AbortError") return "таймаут";            // у AbortError числовой code (20) — его показывать не надо
+    return typeof e.code === "string" ? e.code : "ошибка";
+  };
 
   function xhrJson(url, ms) {
     return new Promise((resolve, reject) => {
@@ -241,7 +246,8 @@
         if (!r.ok) throw fail("HTTP " + r.status);
         try { return await r.json(); } catch (e) { throw fail("формат данных"); }
       } catch (e) {
-        if (e && e.code) throw e;
+        if (e && e.name === "AbortError") throw fail("таймаут");   // соединение молчит — повтор через XHR только добавил бы ожидания
+        if (e && typeof e.code === "string") throw e;
       } finally { clearTimeout(timer); }
     }
     return xhrJson(url, Math.min(ms, 10000));
@@ -333,8 +339,6 @@
 
   // Лёгкий запрос: почасовые данные только на ближайшие 5 суток (а не на все 16) — ответ в несколько раз меньше.
   const OM_HOST = "https://api.open-meteo.com";
-  // Запасной адрес: в Open-Meteo это тот же сервис под другим именем. Если основное имя у вас недоступно, а соседнее нет — выручит оно.
-  const OM_MIRROR = "https://air-quality-api.open-meteo.com";
   function omUrl(lat, lon, light, host) {
     return (host || OM_HOST) + "/v1/forecast?latitude=" + lat + "&longitude=" + lon +
       "&timezone=auto&wind_speed_unit=ms" +
@@ -619,10 +623,56 @@
     };
   }
 
+  // ---- Копия прогноза Open-Meteo, которую раз в час кладёт рядом с приложением GitHub Actions (см. README) ----
+  // Грузится с того же адреса, что и само приложение, поэтому работает там, где api.open-meteo.com недоступен.
+  const COPY_MAX_AGE = 12 * 3600;   // старше 12 часов копию не используем
+  const distKm = (la1, lo1, la2, lo2) => {
+    const r = Math.PI / 180, a = Math.sin((la2 - la1) * r / 2) ** 2 + Math.cos(la1 * r) * Math.cos(la2 * r) * Math.sin((lo2 - lo1) * r / 2) ** 2;
+    return 12742 * Math.asin(Math.sqrt(a));
+  };
+  function copyBases() {
+    const out = [new URL("data/", location.href).href];
+    const m = /^([^.]+)\.github\.io$/.exec(location.hostname), repo = location.pathname.split("/")[1];
+    // запасной адрес тех же файлов, если Pages ещё не пересобрался
+    if (m && repo) out.push("https://raw.githubusercontent.com/" + m[1] + "/" + repo + "/main/data/");
+    return out;
+  }
+  // «Сейчас» в копии может быть часовой давности — берём температуру и значок из почасового ряда на текущий час
+  function freshenCurrent(d) {
+    const now = Math.floor(Date.now() / 1000);
+    const h = d.hourly.filter(x => x.dt <= now + 1800).pop() || d.hourly[0];
+    if (!h) return;
+    const c = d.current;
+    c.temp = h.temp; c.code = h.code; c.isDay = h.isDay;
+    c.feels = apparentTemp(h.temp, c.windSpeed || 0, c.humidity || 50);
+  }
+  async function fetchOmFile(lat, lon) {
+    let lastErr = fail("копии нет");
+    for (const base of copyBases()) {
+      try {
+        const idx = await getJson(base + "index.json", 7000);
+        let best = null, bd = 1e9;
+        (Array.isArray(idx) ? idx : []).forEach(c => { const dk = distKm(lat, lon, c.lat, c.lon); if (dk < bd) { bd = dk; best = c; } });
+        if (!best || bd > 30) throw fail("города нет в копии");
+        const f = await getJson(base + best.file, 9000);
+        const age = Math.floor(Date.now() / 1000) - f.fetched;
+        if (!f.m || !isFinite(age)) throw fail("формат данных");
+        if (age > COPY_MAX_AGE) throw fail("копия устарела");
+        const d = parseForecast(f.m, lat, lon);
+        if (!isValid(d)) throw fail("формат данных");
+        d.src = "omf";
+        d.fetchedAt = f.fetched * 1000;           // в подвале честно видно, насколько копия свежая
+        if (age > 20 * 60) freshenCurrent(d);
+        return d;
+      } catch (e) { lastErr = e; }
+    }
+    throw lastErr;
+  }
+
   // Данные от всех источников: показываем ПЕРВЫЙ полученный, а когда приходит более полный — заменяем
-  // (Open-Meteo: 16 дней, УФ → MET Norway: ~9 дней → OpenWeatherMap: 5 дней)
-  const SRC_RANK = { om: 3, met: 2, owm: 1 };
-  const SRC_NAME = { om: "Open-Meteo", met: "MET Norway", owm: "OpenWeatherMap" };
+  // (Open-Meteo: 16 дней, УФ → копия Open-Meteo на GitHub → MET Norway: ~9 дней → OpenWeatherMap: 5 дней)
+  const SRC_RANK = { om: 4, omf: 3, met: 2, owm: 1 };
+  const SRC_NAME = { om: "Open-Meteo", omf: "Open-Meteo (копия на GitHub)", met: "MET Norway", owm: "OpenWeatherMap" };
   const OMFAIL_KEY = "wx_om_fail";
   const recentOmFail = () => Date.now() - store.get(OMFAIL_KEY, 0) < 20 * 60 * 1000;
   const noteText = d => t("Основной источник недоступен: ", "Primary source unavailable: ") + d.note;
@@ -633,6 +683,7 @@
     const mem = memCache.get(k);
     if (!force && mem && Date.now() - mem.fetchedAt < MEM_FRESH_MS) return mem;
 
+    state.lastFetchAt = Date.now();
     return new Promise((resolve, reject) => {
       const errors = [];
       let best = null, settled = false, active = 0, omDone = false, fbStarted = false, hedgeTimer = null, omLast = "";
@@ -664,7 +715,7 @@
         if (fbStarted) return;
         fbStarted = true;
         clearTimeout(hedgeTimer);
-        track("Open-Meteo (зеркало)", () => fetchOpenMeteo(lat, lon, OM_MIRROR));
+        track("Копия на GitHub", () => fetchOmFile(lat, lon));
         track("MET Norway", () => fetchMet(lat, lon, cb.hint));
         if (WX.OWM_KEY) track("OpenWeatherMap", () => fetchOwm(lat, lon));
         check();
@@ -676,6 +727,7 @@
         try { return await fetchOpenMeteo(lat, lon); }
         catch (e1) {
           omLast = reasonOf(e1);
+          if (best && best.src !== "om") { best.note = omNote(); if (cb.note) cb.note(best); }   // запасные данные уже на экране — сразу пишем настоящую причину
           startFallbacks();
           if (recentOmFail()) throw e1;   // уже подводил недавно — второй попыткой не нагружаем
           await sleep(1200);
@@ -1921,7 +1973,7 @@
     if (document.hidden) return;
     if (state.data) {
       updateSky();
-      if (Date.now() - state.data.fetchedAt > STALE_MS) refresh(false);
+      if (Date.now() - state.data.fetchedAt > STALE_MS && Date.now() - state.lastFetchAt > 5 * 60 * 1000) refresh(false);
     }
   });
 
@@ -2175,7 +2227,7 @@
     ];
     tests.push([t("Радар RainViewer", "RainViewer radar"), "https://api.rainviewer.com/public/weather-maps.json"]);
     tests.push([t("Карта OpenStreetMap", "OpenStreetMap map"), "https://tile.openstreetmap.org/0/0/0.png"]);
-    tests.push(["Open-Meteo (" + t("зеркало", "mirror") + ")", OM_MIRROR + "/v1/forecast?latitude=" + lat + "&longitude=" + lon + "&current=temperature_2m"]);
+    tests.push([t("Копия прогноза на GitHub", "Forecast copy on GitHub"), new URL("data/index.json", location.href).href]);
     tests.push(["MET Norway", "https://api.met.no/weatherapi/locationforecast/2.0/compact?lat=" + Number(lat).toFixed(4) + "&lon=" + Number(lon).toFixed(4)]);
     if (WX.OWM_KEY) tests.push(["OpenWeatherMap", "https://api.openweathermap.org/data/2.5/weather?lat=" + lat + "&lon=" + lon + "&appid=" + WX.OWM_KEY + "&units=metric"]);
     const ms = t("мс", "ms");
@@ -2552,7 +2604,7 @@
   window.addEventListener("online", () => { if (state.city) refresh(true); });
   // пока приложение открыто, данные сами обновляются раз в 10 минут
   setInterval(() => {
-    if (!document.hidden && state.data && Date.now() - state.data.fetchedAt > 10 * 60 * 1000) refresh(false);
+    if (!document.hidden && state.data && Date.now() - state.data.fetchedAt > 10 * 60 * 1000 && Date.now() - state.lastFetchAt > 5 * 60 * 1000) refresh(false);
   }, 60 * 1000);
 
   if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost" || location.hostname === "127.0.0.1")) {
