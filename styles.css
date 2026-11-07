@@ -3,7 +3,7 @@
       --card: rgba(30, 41, 59, 0.75);
       --text: #f1f5f9;
       --muted: #94a3b8;
-      --accent: #38bdf8;
+      --accent: var(--accent);
       --glass: rgba(255, 255, 255, 0.08);
       --border: rgba(255, 255, 255, 0.12);
       --safe-top: env(safe-area-inset-top, 0px);
@@ -912,17 +912,17 @@
       color: inherit; cursor: pointer;
     }
     .settings-opt.active {
-      background: rgba(56,189,248,0.25); border-color: rgba(56,189,248,0.5); color: #38bdf8;
+      background: rgba(56,189,248,0.25); border-color: rgba(56,189,248,0.5); color: var(--accent);
     }
     body.day-mode .settings-opt.active { color: #0369a1; }
     .settings-close {
       width: 100%; margin-top: 16px; padding: 14px; border: none; border-radius: 16px;
-      background: #38bdf8; color: #0f172a; font-weight: 700; font-size: 16px; cursor: pointer;
+      background: var(--accent); color: #0f172a; font-weight: 700; font-size: 16px; cursor: pointer;
     }
 
     /* Осадки в hourly */
     .hour-card .pop {
-      font-size: 11px; color: #38bdf8; margin-top: 4px; font-weight: 600;
+      font-size: 11px; color: var(--accent); margin-top: 4px; font-weight: 600;
     }
     body.day-mode .hour-card .pop { color: #0284c7; }
 
@@ -979,7 +979,7 @@
     }
     .notif-banner button {
       flex-shrink: 0; padding: 8px 12px; border-radius: 12px; border: none;
-      background: #38bdf8; color: #0f172a; font-weight: 700; font-size: 12px; cursor: pointer;
+      background: var(--accent); color: #0f172a; font-weight: 700; font-size: 12px; cursor: pointer;
     }
 
     /* =====================================================
@@ -995,7 +995,7 @@
     /* Видимый фокус с клавиатуры / для доступности */
     button:focus-visible, .fav-chip:focus-visible, .interval-tab:focus-visible,
     .suggestion-item:focus-visible, .radar-btn:focus-visible, input:focus-visible {
-      outline: 2px solid #38bdf8; outline-offset: 2px;
+      outline: 2px solid var(--accent); outline-offset: 2px;
     }
 
     /* Названия в шапке: звезда избранного */
@@ -1027,14 +1027,14 @@
     }
     .toast.show { opacity: 1; transform: translate(-50%, 0); pointer-events: auto; }
     .toast button {
-      border: none; background: #38bdf8; color: #0f172a; font-weight: 700;
+      border: none; background: var(--accent); color: #0f172a; font-weight: 700;
       padding: 7px 12px; border-radius: 10px; font-size: 13px; cursor: pointer; flex-shrink: 0;
     }
 
     /* Кнопка «Попробовать снова» */
     .retry-btn {
       padding: 10px 20px; border-radius: 12px; border: none;
-      background: #38bdf8; color: #0f172a; font-weight: 600; cursor: pointer; font-size: 15px;
+      background: var(--accent); color: #0f172a; font-weight: 600; cursor: pointer; font-size: 15px;
     }
 
     /* Настройки: строка установки и подсказка */
@@ -1064,7 +1064,7 @@
 
     /* Вероятность осадков — отдельная колонка в строке дня (не рвёт название) */
     .day-row .day-name { white-space: nowrap; }
-    .day-row .day-pop { width: 52px; font-size: 12px; font-weight: 600; color: #38bdf8; text-align: center; white-space: nowrap; }
+    .day-row .day-pop { width: 52px; font-size: 12px; font-weight: 600; color: var(--accent); text-align: center; white-space: nowrap; }
     body.day-mode .day-row .day-pop { color: #0284c7; }
 
 
@@ -1324,10 +1324,10 @@
     .rm-zoom { position: absolute; right: 12px; top: 12px; display: flex; flex-direction: column; gap: 8px; }
     .rm-zoom button { width: 44px; height: 44px; border-radius: 12px; border: none; background: rgba(15,23,42,.85); color: #fff; font-size: 24px; line-height: 1; cursor: pointer; box-shadow: 0 2px 10px rgba(0,0,0,.3); }
     .rm-msg { position: absolute; left: 12px; right: 12px; bottom: 12px; padding: 12px 14px; border-radius: 14px; background: rgba(15,23,42,.92); color: #f1f5f9; font-size: 13px; line-height: 1.4; }
-    .rm-msg a { color: #38bdf8; }
+    .rm-msg a { color: var(--accent); }
     .rm-bar { display: flex; align-items: center; gap: 12px; padding: 12px 16px; }
-    .rm-play { width: 44px; height: 44px; flex-shrink: 0; border-radius: 50%; border: none; background: #38bdf8; color: #0f172a; font-size: 18px; cursor: pointer; }
-    .rm-slider { flex: 1; min-width: 0; accent-color: #38bdf8; height: 30px; }
+    .rm-play { width: 44px; height: 44px; flex-shrink: 0; border-radius: 50%; border: none; background: var(--accent); color: #0f172a; font-size: 18px; cursor: pointer; }
+    .rm-slider { flex: 1; min-width: 0; accent-color: var(--accent); height: 30px; }
     .rm-time { font-size: 13px; font-weight: 600; min-width: 112px; text-align: right; }
     .rm-foot { padding: 0 16px calc(12px + env(safe-area-inset-bottom, 0px)); font-size: 11px; opacity: .7; line-height: 1.4; }
     .rm-foot a { color: inherit; }
@@ -1358,7 +1358,7 @@
     .act-st.s1 { background: rgba(245,197,24,.28); color: #a16207; }
     .act-st.s0 { background: rgba(239,68,68,.25); color: #dc2626; }
     .sun-extra { margin-top: 14px; padding-top: 12px; border-top: 1px solid rgba(148,163,184,.2); font-size: 13px; line-height: 1.7; opacity: .92; }
-    .warrow { display: inline-block; font-size: 28px; font-weight: 700; color: #38bdf8; line-height: 1; transition: transform .6s; }
+    .warrow { display: inline-block; font-size: 28px; font-weight: 700; color: var(--accent); line-height: 1; transition: transform .6s; }
     #content[data-hide~="hist"] [data-block="hist"] { display: none; }
     #content[data-hide~="wear"] [data-block="wear"] { display: none; }
     #content[data-hide~="walk"] [data-block="walk"] { display: none; }
@@ -1394,14 +1394,14 @@
     .fr-card h2 { margin: 0 0 8px; font-size: 22px; }
     .fr-card p { margin: 0 0 18px; color: #94a3b8; font-size: 14px; line-height: 1.45; }
     .fr-card .retry-btn { display: block; width: 100%; margin-bottom: 10px; }
-    .fr-alt { border: none; background: none; color: #38bdf8; font: inherit; font-size: 14px; cursor: pointer; padding: 8px; }
+    .fr-alt { border: none; background: none; color: var(--accent); font: inherit; font-size: 14px; cursor: pointer; padding: 8px; }
     .whats-new h3 { margin: 0 0 10px; font-size: 19px; }
     .whats-new ul { margin: 0 0 16px; padding-left: 20px; color: #cbd5e1; font-size: 14px; line-height: 1.55; }
     .whats-new .retry-btn { display: block; width: 100%; }
 
     .blocks-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 6px 14px; width: 100%; font-size: 13px; }
     .blocks-grid label { display: flex; align-items: center; gap: 8px; cursor: pointer; }
-    .blocks-grid input { width: 18px; height: 18px; accent-color: #38bdf8; }
+    .blocks-grid input { width: 18px; height: 18px; accent-color: var(--accent); }
 
     .fav-list { margin: 8px 0 4px; display: flex; flex-direction: column; gap: 8px; }
     .fav-list[hidden] { display: none; }
@@ -1435,9 +1435,9 @@
     .mood-btn { border: 1px solid var(--border); border-radius: 14px; background: rgba(255,255,255,.06); color: inherit;
       padding: 10px 4px; font: inherit; font-size: 22px; cursor: pointer; display: flex; flex-direction: column; align-items: center; gap: 4px; }
     .mood-btn span { font-size: 11px; opacity: .8; }
-    .mood-btn.on { border-color: #38bdf8; background: rgba(56,189,248,.2); }
+    .mood-btn.on { border-color: var(--accent); background: rgba(56,189,248,.2); }
     .chk-row { display: flex; align-items: center; gap: 10px; padding: 7px 0; font-size: 14px; border-top: 1px solid rgba(148,163,184,.18); }
-    .chk-row input { width: 18px; height: 18px; accent-color: #38bdf8; flex-shrink: 0; }
+    .chk-row input { width: 18px; height: 18px; accent-color: var(--accent); flex-shrink: 0; }
     .num-in { width: 110px; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border); background: rgba(255,255,255,.08); color: inherit; font: inherit; }
     .sky-bar { height: 8px; border-radius: 4px; background: rgba(148,163,184,.28); margin-top: 10px; overflow: hidden; }
     .sky-bar i { display: block; height: 100%; border-radius: 4px; background: linear-gradient(90deg, #64748b, #fde68a); }
@@ -1453,3 +1453,18 @@
     #content[data-hide~="story"] [data-block="story"] { display: none; }
     #content[data-hide~="mountain"] [data-block="mountain"] { display: none; }
     #content[data-hide~="route"] [data-block="route"] { display: none; }
+
+
+    /* =====================================================
+       0.0.16: раздел «Подробнее», янтарный акцент
+       ===================================================== */
+    :root { --accent: #fbbf24; }
+    body.day-mode { --accent: #b45309; }
+    details.more { margin: 6px 0 16px; }
+    details.more > summary { list-style: none; cursor: pointer; display: flex; align-items: center; justify-content: space-between; gap: 10px;
+      padding: 14px 18px; border-radius: 18px; border: 1px solid var(--border); background: var(--card); font-size: 15px; font-weight: 600; }
+    details.more > summary::-webkit-details-marker { display: none; }
+    details.more > summary::after { content: "▾"; font-size: 14px; opacity: .7; transition: transform .2s; }
+    details.more[open] > summary::after { transform: rotate(180deg); }
+    body.day-mode details.more > summary { background: rgba(255,255,255,.55); border-color: rgba(255,255,255,.6); color: #0f172a; }
+    details.more .more-body { padding-top: 12px; }

@@ -1014,7 +1014,6 @@
     const low = Math.min.apply(null, win.map(h => h.temp).concat([c.temp]));
     if (low <= -25) add(3, "🥶", t("Сильный мороз: до ", "Severe frost: down to ") + toTemp(low) + tempSym());
     else if (low <= -15) add(2, "🥶", t("Мороз: до ", "Frost: down to ") + toTemp(low) + tempSym());
-    else if (low <= 0 && c.temp > 1) add(1, "🧊", t("Ожидаются заморозки: до ", "Frost expected: down to ") + toTemp(low) + tempSym());
 
     // гололёд: осадки при температуре около нуля, либо ночное похолодание ниже нуля после осадков
     const nearZero = h => h.temp > -4 && h.temp < 2;
@@ -1363,7 +1362,7 @@
     const d = state.data; if (!d) return;
     journal[localDay(Date.now() / 1000, d.tz)] = { mood, dp: pressDelta12(d), kp: d.kp ? d.kp.kp : null, at: Date.now() };
     saveJournal();
-    const el = $("extraCards"); if (el) el.innerHTML = extraCardsHtml(d);
+    const el = $("extraCards"); if (el) el.innerHTML = detailExtraHtml(d);
     toast(t("Записано", "Saved"));
   }
   function journalCard(data) {
@@ -1562,10 +1561,14 @@
     return `<div class="xcard" data-block="route"><div class="chart-title">🧭 ${t("Погода по точкам маршрута", "Weather along the route")}</div>${rows}<div class="x-sub">${t("Точки — ваши избранные города (от 2 до 4)", "Points are your favorite cities (2 to 4)")}</div></div>`;
   }
 
-  function extraCardsHtml(data) {
-    return [journalCard(data), timerCard(data), ventCard(data), skyCard(data), clothesCard(data), storyCard(data),
-      wateringCard(data), frostCard(data), heatingCard(data), mountainCard(data), eventsCard(),
-      `<div id="routeSlot">${routeCardHtml()}</div>`].join("\n");
+  // На виду: только то, что нужно решить сегодня
+  function mainExtraHtml(data) {
+    return [timerCard(data), ventCard(data), frostCard(data)].join("\n");
+  }
+  // В «Подробнее»: справочное и по желанию
+  function detailExtraHtml(data) {
+    return [journalCard(data), skyCard(data), clothesCard(data), wateringCard(data), heatingCard(data),
+      mountainCard(data), eventsCard(), `<div id="routeSlot">${routeCardHtml()}</div>`].join("\n");
   }
 
   // Ряд для «по часам»: «сейчас» + каждые N часов из почасовых данных.
@@ -1801,7 +1804,6 @@
 
       <div id="alertsSlot">${alertsHtml(data)}</div>
 
-      ${hist}
 
       <div class="wear-card anim-fade-up delay-2" data-block="wear">
         <div class="wear-title">👔 ${t("Что надеть", "What to wear")}</div>
@@ -1811,9 +1813,24 @@
       ${walkCard(data)}
 
       <div id="actSlot">${activitiesCard(data)}</div>
+      <div id="extraMain">${mainExtraHtml(data)}</div>
 
+      <div class="section-title anim-fade-up delay-3">🕒 ${t("По часам", "Hourly")}</div>
+      <div class="hourly-scroll" id="hourly">${hourCards(data)}</div>
+
+      <div id="precipSlot" class="anim-fade-up delay-3" data-block="precip">${precipChart(data)}</div>
+
+      <div class="section-title anim-fade-up delay-4" id="dailyTitle">📅 ${t("На", "For")} ${shownDays} ${t("дней", "days")}</div>
+      <div class="interval-tabs anim-fade-up delay-4" id="dayTabs">
+        ${[5, 7, 14].map(n => `<button type="button" class="interval-tab${state.dayRange === n ? " active" : ""}" data-range="${n}">${n}</button>`).join("")}
+      </div>
+      <div class="daily-list" id="dailyList">${dayRows(data)}</div>
+
+      <details class="more" id="moreBlock">
+        <summary>${t("Подробнее: самочувствие, воздух, солнце, карта, неделя", "More: wellbeing, air, sun, radar, week")}</summary>
+        <div class="more-body">
       <div id="meteoSlot">${meteoCard(data)}</div>
-      <div id="extraCards">${extraCardsHtml(data)}</div>
+      <div id="extraCards">${detailExtraHtml(data)}</div>
 
       <div id="pollenSlot" class="anim-fade-up delay-2" data-block="pollen">${pollenCard(data)}</div>
 
@@ -1835,12 +1852,6 @@
           ${today.pop != null && today.pop >= 10 ? `<div class="d-sub">${t("вероятность ", "chance ")}${Math.round(today.pop)}%</div>` : ""}</div>
       </div>
 
-      <div id="kpSlot" class="anim-fade-up delay-3" data-block="kp">${kpCard(data)}</div>
-
-      <div class="chart-card anim-fade-up delay-3" data-block="chart">
-        <div style="font-size:13px;color:var(--muted);margin-bottom:8px">📈 ${t("Температура 24 ч", "Temperature 24h")}</div>
-        <div class="chart-wrap" id="chartWrap">${chartSvg(data)}</div>
-      </div>
 
       <div class="sun-card anim-fade-up delay-3" data-block="sun">
         <div class="sun-row">
@@ -1861,24 +1872,15 @@
         <a class="radar-alt" href="https://www.rainviewer.com/map.html?loc=${city.lat},${city.lon},8" target="_blank" rel="noopener">${t("или на сайте RainViewer", "or on rainviewer.com")}</a>
       </div>
 
-      <div class="section-title anim-fade-up delay-3">🕒 ${t("По часам", "Hourly")}</div>
-      <div class="hourly-scroll" id="hourly">${hourCards(data)}</div>
-
-      <div id="precipSlot" class="anim-fade-up delay-3" data-block="precip">${precipChart(data)}</div>
-
-      <div class="section-title anim-fade-up delay-4" id="dailyTitle">📅 ${t("На", "For")} ${shownDays} ${t("дней", "days")}</div>
-      <div class="interval-tabs anim-fade-up delay-4" id="dayTabs">
-        ${[5, 7, 14].map(n => `<button type="button" class="interval-tab${state.dayRange === n ? " active" : ""}" data-range="${n}">${n}</button>`).join("")}
-      </div>
-      <div class="daily-list" id="dailyList">${dayRows(data)}</div>
-
+        </div>
+      </details>
       <div class="footer anim-fade-up delay-5">${SRC_NAME[data.src] || "Open-Meteo"} · <span id="updatedLabel">${t("обновлено ", "updated ")}${agoText(data.fetchedAt)}</span> · <button type="button" class="refresh-link" data-act="refresh">↻ ${t("обновить", "refresh")}</button> · v${APP_VERSION}${data.src !== "om" && data.note ? `<div class="err-details" id="srcNote" style="margin-top:6px">${esc(noteText(data))}</div>` : ""}${data.src === "met" ? `<div class="err-details" style="margin-top:4px">${t("Данные: Норвежский метеорологический институт (MET Norway)", "Data: Norwegian Meteorological Institute (MET Norway)")}</div>` : ""}</div>
     `;
 
     // запоминаем, что показано, — повторная перерисовка карточек без изменений не проигрывает анимацию заново
     $("aqiSlot").__html = aqiInner(data); $("pollenSlot").__html = pollenCard(data); $("uvCard").__html = uvCard(data);
-    $("alertsSlot").__html = alertsHtml(data); $("kpSlot").__html = kpCard(data);
-    $("actSlot").__html = activitiesCard(data); $("meteoSlot").__html = meteoCard(data);
+    $("alertsSlot").__html = alertsHtml(data); 
+    $("actSlot").__html = activitiesCard(data); $("meteoSlot").__html = meteoCard(data); $("extraMain").__html = mainExtraHtml(data);
 
     updateSky();
     applyEffects(data, city);
@@ -2835,6 +2837,8 @@
 
   // ---------- Первый запуск и «Что нового» ----------
   const WHATS_NEW = {
+    "0.0.16": { ru: ["Экран стал короче: главное сверху, справочное в разделе «Подробнее»", "Убраны дубли: «История дня», «Сравнение со вчера», отдельный график температуры и карточка магнитного поля", "Предупреждения о холоде не повторяются", "Янтарный акцент вместо стандартного синего"],
+              en: ["Shorter screen: essentials on top, reference in the “More” section", "Duplicates removed: story of the day, yesterday comparison, separate temperature chart and magnetic card", "Cold warnings no longer repeat", "Amber accent instead of the default blue"] },
     "0.0.15": { ru: ["Дневник самочувствия с подсказкой о связи с давлением", "Чек-лист «Что взять на неделю», учитывает ребёнка", "Таймер температуры: когда похолодает или потеплеет", "Проветривание, мойка окон, звёздное небо и лучший час для наблюдения", "Сезонные события, полив и заморозки для рассады, подсказка по отоплению", "История дня, погода на высоте и погода по точкам маршрута"],
               en: ["Mood journal with a hint about pressure", "Weekly packing checklist, child-aware", "Temperature timer: when it cools or warms", "Airing, window washing, stars and the best hour to watch", "Seasonal events, garden watering, seedling frost and heating hints", "Story of the day, weather at altitude and weather along the route"] },
     "0.0.14": { ru: ["Определение местоположения: повтор по сети, если GPS молчит", "Понятные подсказки: что делать при запрете доступа или отсутствии сигнала", "Если название места не найдено, берётся ближайший известный город", "Кнопка «Последнее место», если GPS сейчас не работает", "В отчёте: точность и разрешение на геолокацию"],
