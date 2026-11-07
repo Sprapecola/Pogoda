@@ -52,6 +52,7 @@
       </svg>
       <input type="search" id="searchInput" placeholder="Поиск города..." autocomplete="off"
              autocapitalize="words" enterkeyhint="search" aria-label="Поиск города" />
+      <button class="voice-btn" id="voiceBtn" type="button" aria-label="Голосовой поиск" hidden>🎤</button>
       <div class="suggestions" id="suggestions" role="listbox"></div>
     </div>
     <button class="loc-btn" id="locBtn" type="button" aria-label="Моё местоположение">
@@ -60,6 +61,7 @@
         <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/>
       </svg>
     </button>
+    <button class="share-btn" id="shareBtn" type="button" aria-label="Поделиться погодой">📤</button>
     <button class="settings-btn" id="settingsBtn" type="button" aria-label="Настройки">⚙️</button>
   </header>
 
@@ -119,12 +121,48 @@
           <button class="settings-opt" type="button" id="installBtn" data-ru="Установить" data-en="Install">Установить</button>
         </div>
       </div>
+      <div class="settings-row">
+        <span data-ru="Формат времени" data-en="Clock">Формат времени</span>
+        <div class="settings-opts">
+          <button class="settings-opt" type="button" data-k="clock" data-v="24">24 ч</button>
+          <button class="settings-opt" type="button" data-k="clock" data-v="12">12 ч</button>
+        </div>
+      </div>
+      <div class="settings-row">
+        <span data-ru="Режим экономии" data-en="Economy mode">Режим экономии</span>
+        <div class="settings-opts">
+          <button class="settings-opt" type="button" data-k="eco" data-v="auto" data-ru="Авто" data-en="Auto">Авто</button>
+          <button class="settings-opt" type="button" data-k="eco" data-v="on" data-ru="Вкл" data-en="On">Вкл</button>
+          <button class="settings-opt" type="button" data-k="eco" data-v="off" data-ru="Выкл" data-en="Off">Выкл</button>
+        </div>
+      </div>
+      <div class="settings-row" style="flex-direction:column;align-items:flex-start;gap:10px">
+        <span data-ru="Показывать блоки" data-en="Show blocks">Показывать блоки</span>
+        <div class="blocks-grid" id="blocksGrid"></div>
+      </div>
+      <div class="settings-row">
+        <span data-ru="Высота для гор, м" data-en="Altitude for mountains, m">Высота для гор, м</span>
+        <div class="settings-opts"><input type="number" id="altInput" class="num-in" min="0" max="8000" step="50" inputmode="numeric" placeholder="0"></div>
+      </div>
+      <div class="settings-row">
+        <span data-ru="Одежда на ребёнка" data-en="Clothes for a child">Одежда на ребёнка</span>
+        <div class="settings-opts">
+          <button class="settings-opt" type="button" data-k="child" data-v="on" data-ru="Вкл" data-en="On">Вкл</button>
+          <button class="settings-opt" type="button" data-k="child" data-v="off" data-ru="Выкл" data-en="Off">Выкл</button>
+        </div>
+      </div>
+      <div class="settings-row">
+        <span data-ru="Список избранных" data-en="Favorites list">Список избранных</span>
+        <div class="settings-opts"><button class="settings-opt" type="button" id="favListBtn" data-ru="Открыть" data-en="Open">Открыть</button></div>
+      </div>
+      <div class="fav-list" id="favList" hidden></div>
       <details class="adv">
         <summary data-ru="Дополнительно" data-en="Advanced">Дополнительно</summary>
       <div class="settings-row">
         <span data-ru="Проверка связи" data-en="Connection test">Проверка связи</span>
         <div class="settings-opts">
           <button class="settings-opt" type="button" id="diagBtn" data-ru="Проверить" data-en="Run">Проверить</button>
+          <button class="settings-opt" type="button" id="reportBtn" data-ru="Скопировать отчёт" data-en="Copy report">Скопировать отчёт</button>
         </div>
       </div>
       <div class="settings-hint diag-out" id="diagOut" hidden></div>
@@ -144,6 +182,20 @@
   </div>
 
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+  <!-- Первый запуск -->
+  <div class="first-run" id="firstRun" hidden>
+    <div class="fr-card">
+      <div class="fr-emoji">🌤️</div>
+      <h2 data-ru="Добро пожаловать" data-en="Welcome">Добро пожаловать</h2>
+      <p data-ru="Покажем погоду в вашем городе. Нужен только один шаг." data-en="We will show the weather for your city. Just one step.">Покажем погоду в вашем городе. Нужен только один шаг.</p>
+      <button class="retry-btn" id="frPlace" type="button" data-ru="Определить по геолокации" data-en="Detect my location">Определить по геолокации</button>
+      <button class="fr-alt" id="frCity" type="button" data-ru="Выбрать город вручную" data-en="Choose a city">Выбрать город вручную</button>
+    </div>
+  </div>
+
+  <!-- Что нового -->
+  <div class="whats-new" id="whatsNew" hidden></div>
 
   <noscript>Для работы приложения нужен JavaScript.</noscript>
   <script src="config.js"></script>

@@ -34,13 +34,17 @@
 
   const settings = Object.assign({
     theme: "auto", tempUnit: "C", windUnit: "kmh", pressUnit: "mm",
-    lang: (navigator.language || "ru").toLowerCase().indexOf("ru") === 0 ? "ru" : "en"
+    lang: (navigator.language || "ru").toLowerCase().indexOf("ru") === 0 ? "ru" : "en",
+    hide: [], eco: "auto", clock: "24", altitude: 0, child: "off"
   }, store.get(SETTINGS_KEY, {}));
   const saveSettings = () => store.set(SETTINGS_KEY, settings);
 
   let favorites = store.get(FAV_KEY, []);
   if (!Array.isArray(favorites)) favorites = [];
   const saveFavs = () => store.set(FAV_KEY, favorites.slice(0, 8));
+  let recent = store.get("wx_recent_v1", []);
+  if (!Array.isArray(recent)) recent = [];
+  const pushRecent = c => { recent = [{ name: c.name, lat: Number(c.lat), lon: Number(c.lon), tzName: c.tzName }].concat(recent.filter(x => Math.abs(x.lat - c.lat) > 0.01 || Math.abs(x.lon - c.lon) > 0.01)).slice(0, 5); store.set("wx_recent_v1", recent); };
 
   const state = {
     city: null,
@@ -179,8 +183,11 @@
   const monthName = i => (settings.lang === "en" ? MONTHS_EN : MONTHS_RU)[i];
 
   const shifted = (ts, off) => new Date((ts + off) * 1000); // читать через getUTC*
-  const fmtHM = (ts, off) => { const d = shifted(ts, off); return pad(d.getUTCHours()) + ":" + pad(d.getUTCMinutes()); };
-  const fmtHour = (ts, off) => pad(shifted(ts, off).getUTCHours()) + ":00";
+  const clockFmt = (h, m) => settings.clock === "12"
+    ? ((h % 12) || 12) + ":" + pad(m) + " " + (h < 12 ? "AM" : "PM")
+    : pad(h) + ":" + pad(m);
+  const fmtHM = (ts, off) => { const d = shifted(ts, off); return clockFmt(d.getUTCHours(), d.getUTCMinutes()); };
+  const fmtHour = (ts, off) => clockFmt(shifted(ts, off).getUTCHours(), 0);
   const hoursOf = (ts, off) => { const d = shifted(ts, off); return d.getUTCHours() + d.getUTCMinutes() / 60; };
   const deviceOffset = () => -new Date().getTimezoneOffset() * 60;
   const curOffset = () => (state.data ? state.data.tz : deviceOffset());
@@ -311,12 +318,15 @@
         isDay: H.is_day ? H.is_day[i] !== 0 : true,
         pop: H.precipitation_probability ? H.precipitation_probability[i] : null,
         precip: H.precipitation ? H.precipitation[i] : null,
+        press: H.pressure_msl ? H.pressure_msl[i] : null,
+        wind: H.wind_speed_10m ? H.wind_speed_10m[i] : null,
+        wdir: H.wind_direction_10m ? H.wind_direction_10m[i] : null,
         step: 1
       });
     });
 
     return {
-      v: 6, lat: Number(lat), lon: Number(lon), tz: off, fetchedAt: Date.now(),
+      v: 6, lat: Number(lat), lon: Number(lon), tz: off, fetchedAt: Date.now(), elev: typeof m.elevation === "number" ? m.elevation : null,
       current: {
         temp: c.temperature_2m,
         feels: c.apparent_temperature,
@@ -343,7 +353,7 @@
     return (host || OM_HOST) + "/v1/forecast?latitude=" + lat + "&longitude=" + lon +
       "&timezone=auto&wind_speed_unit=ms" +
       "&current=temperature_2m,relative_humidity_2m,apparent_temperature,is_day,weather_code,pressure_msl,wind_speed_10m,wind_direction_10m,wind_gusts_10m,visibility" +
-      "&hourly=temperature_2m,weather_code,is_day,precipitation_probability,precipitation" +
+      "&hourly=temperature_2m,weather_code,is_day,precipitation_probability,precipitation,pressure_msl,wind_speed_10m,wind_direction_10m" +
       "&daily=weather_code,temperature_2m_max,temperature_2m_min,uv_index_max,precipitation_probability_max,precipitation_sum,wind_gusts_10m_max,sunrise,sunset" +
       "&past_days=1&forecast_days=16" + (light ? "&past_hours=1&forecast_hours=120" : "");
   }
@@ -421,6 +431,9 @@
           isDay: isDayAt(tt),
           pop: Math.round(((a.pop || 0)) * 100),
           precip: owmVol(b) / 3,   // объём в записи OWM — за 3 часа, заканчивающиеся в её момент
+          press: (a.main.pressure != null && b.main.pressure != null) ? a.main.pressure + (b.main.pressure - a.main.pressure) * f : null,
+          wind: near.wind ? near.wind.speed : null,
+          wdir: near.wind ? near.wind.deg : null,
           step: 1
         });
       }
@@ -598,7 +611,7 @@
 
     const cur = rows.filter(r => r.dt <= now + 1800).pop() || rows[0];
     const hourly = rows.filter(r => r.dt >= now - 3600).slice(0, 130)
-      .map(r => ({ dt: r.dt, temp: r.temp, code: r.code, isDay: r.isDay, pop: null, precip: r.precip, step: r.step }));
+      .map(r => ({ dt: r.dt, temp: r.temp, code: r.code, isDay: r.isDay, pop: null, precip: r.precip, press: r.press, wind: r.ws, wdir: r.wd, step: r.step }));
 
     const byDay = {};
     rows.forEach(r => { const k = dayKey(r.dt); (byDay[k] || (byDay[k] = [])).push(r); });
@@ -825,6 +838,7 @@
         setSlot($("pollenSlot"), pollenCard(data));
         setSlot($("uvCard"), uvCard(data));
         setSlot($("alertsSlot"), alertsHtml(data));
+        setSlot($("actSlot"), activitiesCard(data));
       } catch (e) { /* не критично */ }
     }
     // магнитное поле: отдельно, чтобы его недоступность ничего не ломала
@@ -835,6 +849,8 @@
         data.kp = k; data.kpAt = Date.now();
         writeCache(data);
         setSlot($("kpSlot"), kpCard(data));
+        setSlot($("meteoSlot"), meteoCard(data));
+        setSlot($("actSlot"), activitiesCard(data));
       } catch (e) { /* NOAA недоступен — карточка просто не появится */ }
     }
   }
@@ -1000,6 +1016,14 @@
     else if (low <= -15) add(2, "🥶", t("Мороз: до ", "Frost: down to ") + toTemp(low) + tempSym());
     else if (low <= 0 && c.temp > 1) add(1, "🧊", t("Ожидаются заморозки: до ", "Frost expected: down to ") + toTemp(low) + tempSym());
 
+    // гололёд: осадки при температуре около нуля, либо ночное похолодание ниже нуля после осадков
+    const nearZero = h => h.temp > -4 && h.temp < 2;
+    if ((nearZero({ temp: c.temp }) && (isWet({ code: c.code }) || win.some(h => h.dt <= now + 6 * 3600 && isWet(h) && nearZero(h))))) {
+      add(2, "🧊", t("Возможен гололёд: осадки при температуре около нуля", "Possible ice: precipitation near freezing"));
+    } else if (c.temp > 0 && low <= 0 && (today.precip || 0) >= 1) {
+      add(2, "🧊", t("Ночью возможен гололёд: после осадков температура опустится ниже нуля", "Possible ice overnight: temperatures will drop below zero after precipitation"));
+    }
+
     const uv = today.uv != null ? today.uv : (data.uvx ? data.uvx.max : null);
     if (uv != null && uv >= 8) add(uv >= 11 ? 3 : 2, "☀️", t("Высокий УФ — нужен солнцезащитный крем", "High UV — use sunscreen"));
     if (data.air && data.air.level >= 4) add(data.air.level >= 5 ? 3 : 2, "😷", t("Плохое качество воздуха", "Poor air quality"));
@@ -1164,7 +1188,384 @@
       const when = w.day === "tomorrow" ? t("Завтра ", "Tomorrow ") + range : (w.from <= now + 1800 ? t("Прямо сейчас, до ", "Right now, until ") + fmtHM(w.to, off) : range);
       body = `<div class="walk-time">${when}</div><div class="walk-sub">${describe(w.code)}, ${toTemp(w.temp)}${tempSym()}${t(", без осадков", ", dry")}</div>`;
     }
-    return `<div class="walk-card anim-fade-up delay-2"><div class="chart-title">🚶 ${t("Лучшее время для прогулки", "Best time for a walk")}</div>${body}</div>`;
+    return `<div class="walk-card anim-fade-up delay-2" data-block="walk"><div class="chart-title">🚶 ${t("Лучшее время для прогулки", "Best time for a walk")}</div>${body}</div>`;
+  }
+
+  // =====================================================================
+  //  Метеозависимость, занятия и рыбалка, луна
+  // =====================================================================
+  function moonPhase(nowSec) {
+    const SYN = 29.530588853, ref = Date.UTC(2000, 0, 6, 18, 14) / 86400000;   // известное новолуние
+    let ph = ((nowSec / 86400 - ref) / SYN) % 1;
+    if (ph < 0) ph += 1;
+    const idx = Math.floor(ph * 8 + 0.5) % 8;
+    const names = settings.lang === "en"
+      ? ["New Moon", "Waxing Crescent", "First Quarter", "Waxing Gibbous", "Full Moon", "Waning Gibbous", "Last Quarter", "Waning Crescent"]
+      : ["Новолуние", "Растущий серп", "Первая четверть", "Растущая луна", "Полнолуние", "Убывающая луна", "Последняя четверть", "Убывающий серп"];
+    return { name: names[idx], icon: ["🌑", "🌒", "🌓", "🌔", "🌕", "🌖", "🌗", "🌘"][idx], illum: Math.round((1 - Math.cos(2 * Math.PI * ph)) / 2 * 100) };
+  }
+  const durText = sec => { const m = Math.max(0, Math.round(sec / 60)); return Math.floor(m / 60) + t(" ч ", " h ") + (m % 60) + t(" мин", " min"); };
+  const pressDeltaText = hpa => settings.pressUnit === "hpa" ? Math.round(Math.abs(hpa)) + " " + t("гПа", "hPa") : Math.round(Math.abs(hpa) * 0.750062) + " " + t("мм рт. ст.", "mmHg");
+  const pressSeries = (data, hours) => {
+    const now = Math.floor(Date.now() / 1000);
+    return data.hourly.filter(h => (h.step || 1) === 1 && h.press != null && h.dt >= now - 1800 && h.dt <= now + hours * 3600);
+  };
+
+  // Метеозависимость: давление за сутки, магнитное поле, перепад температуры. Ориентир, а не медицинская рекомендация.
+  function meteoCard(data) {
+    const series = pressSeries(data, 24), kp = data.kp ? data.kp.kp : null;
+    if (series.length < 6 && kp == null) return "";
+    const reasons = [];
+    let pts = 0;
+    if (series.length >= 6) {
+      const dp = series[series.length - 1].press - series[0].press, mm = Math.abs(dp * 0.750062);
+      if (mm >= 5) {
+        pts += mm >= 8 ? 2 : 1;
+        reasons.push((dp < 0 ? t("Давление падает: ", "Pressure is falling: ") : t("Давление растёт: ", "Pressure is rising: ")) + pressDeltaText(dp) + t(" за сутки", " in 24 h"));
+      }
+    }
+    if (kp != null && kp >= 4) { pts += kp >= 5 ? 2 : 1; reasons.push((kp >= 5 ? t("Магнитная буря", "Geomagnetic storm") : t("Магнитное поле неспокойное", "Geomagnetic field is unsettled")) + ": Kp " + Math.round(kp * 10) / 10); }
+    const d0 = data.daily[0], d1 = data.daily[1];
+    if (d0 && d1 && Math.abs(d1.max - d0.max) >= 8) { pts += 1; reasons.push(t("Резкий перепад температуры завтра: ", "Sharp temperature change tomorrow: ") + (d1.max > d0.max ? "+" : "−") + Math.abs(toTempDelta(d1.max - d0.max)) + tempSym()); }
+    const level = pts >= 3 ? 2 : pts >= 2 ? 1 : 0;
+    const names = settings.lang === "en" ? ["Calm day", "Some discomfort possible", "Higher strain"] : ["Спокойный день", "Возможны недомогания", "Повышенная нагрузка"];
+    const colors = ["#2fd47a", "#fb8c1a", "#ef4444"];
+    let spark = "";
+    if (series.length >= 6) {
+      const vals = series.map(h => settings.pressUnit === "hpa" ? h.press : h.press * 0.750062);
+      const mn = Math.min.apply(null, vals), mx = Math.max.apply(null, vals), span = Math.max(1, mx - mn);
+      const W = 320, H = 64, pad = 8;
+      const pts2 = vals.map((v, i) => [pad + i / (vals.length - 1) * (W - pad * 2), H - pad - (v - mn) / span * (H - pad * 2)]);
+      const line = pts2.map((q, i) => (i ? "L" : "M") + q[0].toFixed(1) + "," + q[1].toFixed(1)).join(" ");
+      spark = `<svg viewBox="0 0 ${W} ${H}" class="spark" role="img" aria-label="${t("Давление на 24 часа", "Pressure over 24 hours")}">` +
+        `<path d="${line}" fill="none" stroke="${colors[level]}" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"/>` +
+        `<circle cx="${pts2[0][0].toFixed(1)}" cy="${pts2[0][1].toFixed(1)}" r="4" fill="${colors[level]}"/>` +
+        `<text x="${pad}" y="11" font-size="10" fill="currentColor" opacity=".6">${Math.round(mx)}</text><text x="${pad}" y="${H - 2}" font-size="10" fill="currentColor" opacity=".6">${Math.round(mn)}</text></svg>`;
+    }
+    return `<div class="meteo-card anim-fade-up delay-2" data-block="meteo">
+      <div class="chart-title">🧠 ${t("Метеозависимость", "Weather sensitivity")}</div>
+      <div class="meteo-level"><span class="lvl-dot" style="background:${colors[level]};color:${colors[level]}"></span>${names[level]}</div>
+      <div class="meteo-text">${reasons.length ? reasons.map(esc).join("<br>") : t("Давление стабильно, магнитное поле спокойное", "Pressure is steady, the geomagnetic field is calm")}</div>
+      ${spark}
+      <div class="meteo-foot">${t("Давление, ", "Pressure, ")}${pressSym()} · ${t("ориентир, не медицинская рекомендация", "a guide, not medical advice")}</div></div>`;
+  }
+
+  // «Можно ли сегодня…»: простые правила по уже загруженным данным
+  function activitiesCard(data) {
+    const now = Math.floor(Date.now() / 1000), c = data.current;
+    const win = hours => data.hourly.filter(x => (x.step || 1) === 1 && x.dt >= now - 1800 && x.dt <= now + hours * 3600);
+    const n3 = win(3), n6 = win(6), n24 = win(24);
+    const wetNow = isWet({ code: c.code, precip: null });
+    const rain24 = n24.reduce((a, x) => a + (x.precip || 0), 0);
+    const d0 = data.daily[0] || {}, d1 = data.daily[1] || {};
+    const air = data.air ? data.air.level : 1, wind = c.windSpeed || 0, T = c.temp;
+    const rows = [];
+    const add = (icon, name, st, text) => rows.push({ icon, name, st, text });
+
+    // бег и велосипед
+    if (wetNow || n3.some(isWet)) add("🏃", t("Бег и велосипед", "Running and cycling"), 0, t("Осадки", "Precipitation"));
+    else if (T < -15 || T > 30) add("🏃", t("Бег и велосипед", "Running and cycling"), 0, T < 0 ? t("Слишком холодно", "Too cold") : t("Слишком жарко", "Too hot"));
+    else if (air >= 4) add("🏃", t("Бег и велосипед", "Running and cycling"), 0, t("Плохой воздух", "Poor air quality"));
+    else if (wind >= 10 || T < 0 || T > 26 || air === 3) add("🏃", t("Бег и велосипед", "Running and cycling"), 1, wind >= 10 ? t("Сильный ветер", "Strong wind") : T < 0 ? t("Холодно", "Cold") : T > 26 ? t("Жарко", "Hot") : t("Воздух так себе", "Mediocre air"));
+    else add("🏃", t("Бег и велосипед", "Running and cycling"), 2, t("Хорошие условия", "Good conditions"));
+
+    // шашлык
+    if (n6.some(isWet)) add("🍖", t("Шашлык и пикник", "Barbecue and picnic"), 0, t("Ожидаются осадки", "Precipitation expected"));
+    else if (wind >= 8 || T < 8) add("🍖", t("Шашлык и пикник", "Barbecue and picnic"), 1, wind >= 8 ? t("Ветрено", "Windy") : t("Прохладно", "Chilly"));
+    else add("🍖", t("Шашлык и пикник", "Barbecue and picnic"), 2, t("Подходящая погода", "Suitable weather"));
+
+    // сушка белья на улице
+    if (n6.some(isWet)) add("👕", t("Сушка белья на улице", "Drying laundry outdoors"), 0, t("Дождь помешает", "Rain will interfere"));
+    else if (c.humidity >= 80 || T <= 3) add("👕", t("Сушка белья на улице", "Drying laundry outdoors"), 1, t("Будет сохнуть долго", "Will dry slowly"));
+    else add("👕", t("Сушка белья на улице", "Drying laundry outdoors"), 2, t("Высохнет быстро", "Will dry quickly"));
+
+    // мойка машины
+    const p48 = (d0.precip || 0) + (d1.precip || 0);
+    if (wetNow || p48 >= 1) add("🚗", t("Мойка машины", "Car wash"), 0, t("Ожидаются осадки: лучше подождать", "Precipitation expected: better wait"));
+    else if (T < -5) add("🚗", t("Мойка машины", "Car wash"), 1, t("Мороз: вода замёрзнет", "Frost: water will freeze"));
+    else add("🚗", t("Мойка машины", "Car wash"), 2, t("Двое суток без осадков", "Two days without precipitation"));
+
+    // полив огорода
+    if (rain24 >= 3) add("🌱", t("Полив огорода", "Watering the garden"), 1, t("Не нужен: будет дождь, ", "Not needed: rain ahead, ") + fmtMm(rain24));
+    else if (T < 5) add("🌱", t("Полив огорода", "Watering the garden"), 1, t("Не нужен: холодно", "Not needed: cold"));
+    else add("🌱", t("Полив огорода", "Watering the garden"), 2, t("Нужен, лучше вечером", "Needed, best in the evening"));
+
+    // рыбалка: стабильное давление, умеренный ветер, облачность — хорошо; шторм, скачки давления, магнитная буря — плохо
+    let sc = 50, why = [];
+    const ps = pressSeries(data, 24);
+    if (ps.length >= 6) {
+      const mm = Math.abs((ps[ps.length - 1].press - ps[0].press) * 0.750062);
+      if (mm < 2) { sc += 20; why.push(t("давление стабильное", "steady pressure")); } else if (mm < 5) sc += 5; else { sc -= 15; why.push(t("давление скачет", "pressure swings")); }
+    }
+    if (wind >= 1 && wind <= 6) sc += 15; else if (wind > 9) { sc -= 20; why.push(t("сильный ветер", "strong wind")); }
+    const k = kindOf(c.code);
+    if (k === "clouds") sc += 10; else if (k === "clear") sc -= 5; else if (k === "storm") sc -= 25; else if (k === "rain") sc -= 5;
+    if (data.kp && data.kp.kp >= 5) { sc -= 15; why.push(t("магнитная буря", "geomagnetic storm")); }
+    add("🎣", t("Рыбалка", "Fishing"), sc >= 70 ? 2 : sc >= 45 ? 1 : 0,
+      (sc >= 70 ? t("Клёв хороший", "Good bite") : sc >= 45 ? t("Клёв средний", "Average bite") : t("Клёв слабый", "Poor bite")) + (why.length ? ": " + why.join(", ") : ""));
+
+    const mark = ["✕", "~", "✓"];
+    return `<div class="act-card anim-fade-up delay-2" data-block="activities">
+      <div class="chart-title">🗓️ ${t("Что подходит сегодня", "What suits today")}</div>
+      ${rows.map(r => `<div class="act-row"><span class="act-ic">${r.icon}</span><div class="act-main"><div class="act-name">${r.name}</div><div class="act-text">${esc(r.text)}</div></div><span class="act-st s${r.st}">${mark[r.st]}</span></div>`).join("")}</div>`;
+  }
+
+  // =====================================================================
+  //  0.0.15: дневник, чек-лист, таймер температуры, проветривание, звёзды, события сезона,
+  //  полив, заморозки, отопление, история дня, высота в горах, избранные точки маршрута
+  // =====================================================================
+  const localDay = (ts, tz) => new Date((ts + tz) * 1000).toISOString().slice(0, 10);
+  const MOODS = [["good", "😊", "Хорошо", "Good"], ["ok", "😐", "Нормально", "Okay"], ["headache", "🤕", "Болит голова", "Headache"], ["tired", "😴", "Разбит", "Tired"]];
+  let journal = store.get("wx_journal_v1", {});
+  if (!journal || typeof journal !== "object" || Array.isArray(journal)) journal = {};
+  const saveJournal = () => store.set("wx_journal_v1", journal);
+  let events = store.get("wx_events_v1", []);
+  if (!Array.isArray(events)) events = [];
+  const saveEvents = () => store.set("wx_events_v1", events.slice(-30));
+  let clothesChecks = store.get("wx_clothes_v1", {});
+  if (!clothesChecks || typeof clothesChecks !== "object") clothesChecks = {};
+  let routeRows = null;
+
+  // История давления по городам: по ней считаем изменение за 12 часов
+  const PH_KEY = "wx_press_hist_v1";
+  function notePressure(data) {
+    if (!data || !data.current || data.current.pressure == null) return;
+    const k = data.lat.toFixed(1) + "," + data.lon.toFixed(1), now = Math.floor(Date.now() / 1000);
+    let all = store.get(PH_KEY, {});
+    if (!all || typeof all !== "object" || Array.isArray(all)) all = {};
+    const arr = (all[k] || []).filter(x => now - x.t < 36 * 3600);
+    if (!arr.length || now - arr[arr.length - 1].t > 900) arr.push({ t: now, p: data.current.pressure });
+    all[k] = arr.slice(-160);
+    store.set(PH_KEY, all);
+  }
+  function pressDelta12(data) {
+    const k = data.lat.toFixed(1) + "," + data.lon.toFixed(1), now = Math.floor(Date.now() / 1000);
+    const all = store.get(PH_KEY, {}), arr = (all && all[k]) || [];
+    if (!arr.length || data.current.pressure == null) return null;
+    const target = now - 12 * 3600;
+    let best = null, bd = Infinity;
+    arr.forEach(x => { const d = Math.abs(x.t - target); if (d < bd) { bd = d; best = x; } });
+    if (!best || bd > 7200 || now - best.t < 6 * 3600) return null;
+    return data.current.pressure - best.p;   // гПа за 12 часов
+  }
+
+  // Дневник самочувствия: сравниваем дни с падением давления и без него
+  function diaryStats() {
+    const n = Object.keys(journal).length;
+    const rows = Object.keys(journal).map(k => journal[k]).filter(x => x && x.mood && x.dp != null);
+    if (rows.length < 7) return { enough: false, n };
+    const bad = rows.filter(x => x.mood === "headache" || x.mood === "tired");
+    const good = rows.filter(x => x.mood === "good" || x.mood === "ok");
+    const falling = x => x.dp <= -4;
+    return { enough: true, n, nb: bad.length, fb: bad.filter(falling).length, ng: good.length, fg: good.filter(falling).length };
+  }
+  function logMood(mood) {
+    const d = state.data; if (!d) return;
+    journal[localDay(Date.now() / 1000, d.tz)] = { mood, dp: pressDelta12(d), kp: d.kp ? d.kp.kp : null, at: Date.now() };
+    saveJournal();
+    const el = $("extraCards"); if (el) el.innerHTML = extraCardsHtml(d);
+    toast(t("Записано", "Saved"));
+  }
+  function journalCard(data) {
+    const today = localDay(Date.now() / 1000, data.tz), e = journal[today];
+    const btns = MOODS.map(m => `<button type="button" class="mood-btn${e && e.mood === m[0] ? " on" : ""}" data-act="mood" data-mood="${m[0]}">${m[1]}<span>${esc(t(m[2], m[3]))}</span></button>`).join("");
+    const st = diaryStats();
+    let txt;
+    if (!st.enough) txt = t("Отмечайте самочувствие каждый день. Через неделю появится подсказка, есть ли связь с давлением. Записей сейчас: ", "Log how you feel every day. After a week a hint about pressure may appear. Entries so far: ") + st.n;
+    else if (st.nb >= 3 && st.ng >= 3) {
+      const rb = st.fb / st.nb, rg = st.fg / st.ng;
+      txt = rb - rg >= 0.3
+        ? t("В дни с падением давления недомогания были заметно чаще: " + st.fb + " из " + st.nb + " против " + st.fg + " из " + st.ng + ". Это по вашим записям, а не доказательство.",
+            "On days with falling pressure you felt worse more often: " + st.fb + " of " + st.nb + " vs " + st.fg + " of " + st.ng + ". Based on your entries only, not proof.")
+        : t("По вашим записям связи с падением давления не видно.", "Your entries show no clear link to falling pressure.");
+    } else txt = t("Недомоганий пока мало для вывода. Продолжайте записывать.", "Not enough symptom days yet. Keep logging.");
+    return `<div class="xcard" data-block="journal"><div class="chart-title">📓 ${t("Самочувствие сегодня", "How you feel today")}</div><div class="mood-row">${btns}</div><div class="x-text">${esc(txt)}</div></div>`;
+  }
+
+  // Чек-лист на неделю: галочки сохраняются
+  function clothesCard(data) {
+    const days = data.daily.slice(0, 7); if (!days.length) return "";
+    const minT = Math.min.apply(null, days.map(d => d.min)), maxT = Math.max.apply(null, days.map(d => d.max));
+    const rainDays = days.filter(d => (d.precip || 0) >= 1 || (d.pop || 0) >= 60).length;
+    const gust = Math.max.apply(null, days.map(d => d.gust || 0));
+    const sunny = days.some(d => (d.uv || 0) >= 5);
+    const items = [];
+    if (minT <= 0) items.push(t("Шапка и перчатки", "Hat and gloves"));
+    if (minT <= 5) items.push(t("Тёплая куртка или пуховик", "Warm jacket or down coat"));
+    else if (minT <= 12) items.push(t("Лёгкая куртка или кофта", "Light jacket or sweater"));
+    if (maxT - minT >= 10) items.push(t("Многослойность: футболка, свитер, куртка", "Layers: tee, sweater, jacket"));
+    if (maxT >= 25) items.push(t("Лёгкая одежда, головной убор, вода", "Light clothes, hat, water"));
+    if (rainDays) items.push(t("Зонт и непромокаемая обувь (дождливых дней: " + rainDays + ")", "Umbrella and waterproof shoes (rainy days: " + rainDays + ")"));
+    if (gust >= 12) items.push(t("Ветровка", "Windbreaker"));
+    if (sunny) items.push(t("Солнцезащитные очки и крем", "Sunglasses and sunscreen"));
+    if (settings.child === "on") items.push(t("Ребёнку: запасной комплект и +1 слой", "For a child: spare set and one more layer"));
+    const wk = days[0].date;
+    const rows = items.map((x, i) => { const key = wk + ":" + i; return `<label class="chk-row"><input type="checkbox" data-chk="${key}"${clothesChecks[key] ? " checked" : ""}> ${esc(x)}</label>`; }).join("");
+    return `<div class="xcard" data-block="clothes"><div class="chart-title">🧳 ${t("Что взять на неделю", "What to pack for the week")}</div>${rows}</div>`;
+  }
+  content.addEventListener("change", e => {
+    if (e.target && e.target.matches && e.target.matches("[data-chk]")) { clothesChecks[e.target.dataset.chk] = e.target.checked; store.set("wx_clothes_v1", clothesChecks); }
+  });
+
+  // Таймер: ближайший переход через круглую отметку температуры
+  function timerCard(data) {
+    const now = Math.floor(Date.now() / 1000), c = data.current.temp;
+    const hrs = data.hourly.filter(h => (h.step || 1) === 1 && h.dt > now && h.dt <= now + 48 * 3600);
+    let best = null;
+    [-10, -5, 0, 5, 10, 15, 20, 25, 30].forEach(th => {
+      let hit = null;
+      if (c > th) hit = hrs.find(h => h.temp <= th);
+      else if (c < th) hit = hrs.find(h => h.temp >= th);
+      // при одновременном пересечении нескольких порогов берём ближайший к текущей температуре
+      if (hit && (!best || hit.dt < best.dt || (hit.dt === best.dt && Math.abs(th - c) < Math.abs(best.th - c)))) best = { dt: hit.dt, th, down: c > th };
+    });
+    if (!best) return "";
+    const lvl = toTemp(best.th) + tempSym(), when = whenText(best.dt, data.tz, now);
+    const txt = best.down ? t("Похолодает до " + lvl + " около " + when, "Cools to " + lvl + " around " + when)
+                          : t("Потеплеет до " + lvl + " около " + when, "Warms to " + lvl + " around " + when);
+    return `<div class="xcard" data-block="timer"><div class="chart-title">⏱️ ${t("Таймер температуры", "Temperature timer")}</div><div class="x-big">${esc(txt)}</div></div>`;
+  }
+
+  // Проветривание и мойка окон
+  function ventCard(data) {
+    const c = data.current, now = Math.floor(Date.now() / 1000);
+    const air = data.air ? data.air.level : 1, wind = c.windSpeed || 0;
+    const next6 = data.hourly.filter(h => h.dt > now && h.dt <= now + 6 * 3600);
+    let st, text;
+    if (air >= 4) { st = 0; text = t("Воздух загрязнён: проветривайте коротко или не открывайте окна", "Polluted air: ventilate briefly or keep windows closed"); }
+    else if (next6.some(isWet)) { st = 1; text = t("Скоро осадки: проветрите сейчас, коротко", "Precipitation soon: ventilate now, briefly"); }
+    else if (c.temp <= -10) { st = 1; text = t("Мороз: проветривайте 5–10 минут, не дольше", "Frost: ventilate for 5–10 minutes only"); }
+    else if (wind >= 12) { st = 1; text = t("Сильный ветер: открывайте окна осторожно, не нараспашку", "Strong wind: open windows carefully"); }
+    else if (c.humidity >= 80) { st = 1; text = t("Влажно: лучше проветрить днём, когда теплее", "Humid: better in the warmer daytime"); }
+    else { st = 2; text = t("Хорошее время проветрить", "Good time to air the room"); }
+    const wash = !next6.some(isWet) && wind < 6 && c.temp >= 8 && c.temp <= 25 && !(data.air && data.air.level >= 4);
+    const mark = ["✕", "~", "✓"];
+    return `<div class="xcard" data-block="ventilate"><div class="chart-title">🪟 ${t("Проветривание и мойка окон", "Airing and window washing")}</div><div class="x-row"><span class="act-st s${st}">${mark[st]}</span><div class="x-text">${esc(text)}</div></div>${wash ? `<div class="x-sub">${t("Окна мыть можно: без дождя, слабый ветер, в тени", "Good for washing windows: no rain, light wind, in shade")}</div>` : ""}</div>`;
+  }
+
+  // Звёздное небо: лучший час ближайшей ночи (облачность и луна)
+  function skyCard(data) {
+    const now = Math.floor(Date.now() / 1000), tz = data.tz;
+    const night = data.hourly.filter(h => (h.step || 1) === 1 && !h.isDay && h.dt > now && h.dt <= now + 30 * 3600);
+    if (night.length < 3) return "";
+    const base = h => h.code === 0 ? 100 : h.code === 1 ? 85 : h.code === 2 ? 55 : h.code === 3 ? 20 : 0;
+    const score = h => Math.round(base(h) * (1 - 0.5 * moonPhase(h.dt).illum / 100));
+    const best = night.reduce((a, h) => (score(h) > score(a) ? h : a), night[0]);
+    const sc = score(best), moon = moonPhase(best.dt);
+    const txt = sc < 30
+      ? t("Звёзд, скорее всего, не видно: небо закрыто облаками", "Stars are probably not visible: the sky is covered")
+      : t("Лучше всего смотреть около " + fmtHM(best.dt, tz) + ": " + describe(best.code).toLowerCase() + ", луна " + moon.illum + "%", "Best around " + fmtHM(best.dt, tz) + ": " + describe(best.code).toLowerCase() + ", moon " + moon.illum + "%");
+    return `<div class="xcard" data-block="stars"><div class="chart-title">✨ ${t("Звёздное небо", "Stars tonight")}</div><div class="x-text">${esc(txt)}</div><div class="sky-bar"><i style="width:${sc}%"></i></div><div class="x-sub">${t("Видимость звёзд: ", "Star visibility: ")}${sc}%</div></div>`;
+  }
+
+  // Сезонные события: отмечаются один раз, когда появляются в прогнозе
+  function detectEvents(data) {
+    const tz = data.tz, today = localDay(Date.now() / 1000, tz);
+    let changed = false;
+    const add = (key, title, date) => { if (!events.some(e => e.key === key)) { events.push({ key, title, date }); changed = true; } };
+    const month = d => +d.slice(5, 7), year = d => d.slice(0, 4);
+    const frost = data.daily.find(d => d.min < 0 && month(d.date) >= 8 && month(d.date) <= 11);
+    if (frost) add("frost-" + year(frost.date), t("Первый заморозок (по прогнозу)", "First frost (forecast)"), frost.date);
+    const snow = data.daily.find(d => [71, 73, 75, 77, 85, 86].indexOf(d.code) >= 0 && (month(d.date) >= 9 || month(d.date) <= 5));
+    if (snow) {
+      const season = month(snow.date) >= 9 ? year(snow.date) : String(+year(snow.date) - 1);
+      add("snow-" + season, t("Первый снег (по прогнозу)", "First snow (forecast)"), snow.date);
+    }
+    const dl = data.daily.filter(d => d.sunrise && d.sunset).map(d => ({ d, len: d.sunset - d.sunrise }));
+    if (dl.length) {
+      const top = dl.reduce((a, b) => (b.len > a.len ? b : a));
+      if (month(top.d.date) === 6) add("longest-" + year(top.d.date), t("Самый длинный день: ", "Longest day: ") + durText(top.len), top.d.date);
+    }
+    if (changed) saveEvents();
+    return today;
+  }
+  function eventsCard() {
+    if (!events.length) return "";
+    const list = events.slice(-5).reverse().map(e => `<div class="x-row small">📌 <span class="x-name">${esc(e.title)}</span><span class="x-sub">${esc(e.date.slice(8) + "." + e.date.slice(5, 7))}</span></div>`).join("");
+    return `<div class="xcard" data-block="events"><div class="chart-title">🗓️ ${t("Сезонные события", "Seasonal events")}</div>${list}</div>`;
+  }
+
+  // Полив огорода на неделю по прогнозу осадков
+  function wateringCard(data) {
+    const days = data.daily.slice(0, 7); if (!days.length) return "";
+    const rows = days.map((d, i) => {
+      const rain = d.precip || 0;
+      let st, txt;
+      if (rain >= 5) { st = 0; txt = t("дождь, полив не нужен", "rain, no watering"); }
+      else if (rain >= 1.5) { st = 1; txt = t("немного дождя, полив по необходимости", "light rain, water as needed"); }
+      else if (d.max >= 25) { st = 2; txt = t("жарко: полив утром и вечером", "hot: water morning and evening"); }
+      else { st = 2; txt = t("полив вечером", "water in the evening"); }
+      const nm = i === 0 ? t("Сегодня", "Today") : dayName(new Date(d.date + "T12:00:00Z").getUTCDay());
+      return `<div class="x-row small"><span class="act-st s${st}">${["✕", "~", "✓"][st]}</span><span class="x-name">${nm}</span><span class="x-sub">${esc(txt)}</span></div>`;
+    }).join("");
+    return `<div class="xcard" data-block="watering"><div class="chart-title">🌱 ${t("Полив огорода на неделю", "Garden watering for the week")}</div>${rows}</div>`;
+  }
+
+  // Заморозки для рассады: ночи с температурой около нуля и ниже
+  function frostCard(data) {
+    const bad = data.daily.slice(0, 5).filter(d => d.min <= 2);
+    if (!bad.length) return "";
+    const lines = bad.map(d => `<div class="x-row small">🌡️ <span class="x-name">${d.date.slice(8)}.${d.date.slice(5, 7)}</span>${t("ночью около ", "night about ")}${toTemp(d.min)}${tempSym()}</div>`).join("");
+    return `<div class="xcard warn" data-block="frost"><div class="chart-title">🌱 ${t("Рассада и заморозки", "Seedlings and frost")}</div>${lines}<div class="x-sub">${t("Накройте рассаду или унесите под навес на эти ночи", "Cover seedlings or move them under shelter on these nights")}</div></div>`;
+  }
+
+  // Отопление: подсказка по средней ночной температуре на 3 ближайшие ночи
+  function heatingCard(data) {
+    const nights = data.daily.slice(0, 3).map(d => d.min); if (nights.length < 2) return "";
+    const avg = nights.reduce((a, b) => a + b, 0) / nights.length;
+    const txt = avg <= 3 ? t("Ночи холодные: держите обычный режим отопления", "Cold nights: keep normal heating")
+      : avg <= 9 ? t("Ночи прохладные: можно снизить отопление на 1–2°", "Cool nights: you can lower heating by 1–2°")
+      : t("Ночи тёплые: отопление можно заметно снизить", "Warm nights: heating can be lowered a lot");
+    return `<div class="xcard" data-block="heating"><div class="chart-title">🔥 ${t("Отопление и экономия", "Heating and savings")}</div><div class="x-text">${esc(txt)}</div><div class="x-sub">${t("Средняя ночная температура на 3 ближайшие ночи: ", "Average night temperature for the next 3 nights: ")}${toTemp(avg)}${tempSym()}</div></div>`;
+  }
+
+  // История дня: короткий текст по шаблону, без нейросети
+  function storyCard(data) {
+    const c = data.current, today = data.daily[0] || {}, sm = rainSummary(data), doy = Math.floor(Date.now() / 86400000);
+    const open = [t("Сегодня", "Today"), t("На улице", "Outside"), t("За окном", "Out the window")][doy % 3];
+    const parts = [open + " " + toTemp(c.temp) + tempSym() + ", " + describe(c.code).toLowerCase() + "."];
+    parts.push(t("Ощущается как ", "Feels like ") + toTemp(c.feels) + tempSym() + t(", ветер ", ", wind ") + toWind(c.windSpeed || 0) + " " + windSym() + ".");
+    if (sm) parts.push(sm.text + ".");
+    if (today.max != null) parts.push(t("Днём до ", "High up to ") + toTemp(today.max) + tempSym() + ".");
+    return `<div class="xcard" data-block="story"><div class="chart-title">📖 ${t("История дня", "Story of the day")}</div><div class="x-text">${esc(parts.join(" "))}</div></div>`;
+  }
+
+  // Погода на высоте: температура пересчитывается от высоты города (−0,65° на 100 м)
+  function mountainCard(data) {
+    const alt = Number(settings.altitude) || 0;
+    if (alt <= 0 || data.elev == null) return "";
+    const base = data.elev, dt = -0.0065 * (alt - base), d = data.daily[0] || {};
+    return `<div class="xcard" data-block="mountain"><div class="chart-title">⛰️ ${t("Погода на высоте " + alt + " м", "Weather at " + alt + " m")}</div>` +
+      `<div class="x-big">${toTemp(data.current.temp + dt)}${tempSym()} <span class="x-sub">${t("сейчас", "now")}</span></div>` +
+      (d.max != null ? `<div class="x-sub">${t("Днём до ", "High up to ")}${toTemp(d.max + dt)}${tempSym()}</div>` : "") +
+      `<div class="x-sub">${t("Высота города " + Math.round(base) + " м. Пересчёт по средней вертикальной поправке, точность ориентировочная.", "City elevation " + Math.round(base) + " m. Estimate based on the average lapse rate.")}</div></div>`;
+  }
+
+  // Погода по избранным точкам маршрута (2–4 города)
+  async function loadRoute(seq) {
+    const pts = favorites.slice(0, 4);
+    if (pts.length < 2) { routeRows = null; setSlot($("routeSlot"), ""); return; }
+    const rows = await Promise.all(pts.map(async f => {
+      try {
+        const d = await fetchWeather(f.lat, f.lon, false);
+        const sm = rainSummary(d);
+        return { name: f.name, temp: toTemp(d.current.temp) + tempSym(), text: sm ? sm.text : "" };
+      } catch (e) { return { name: f.name, temp: "—", text: t("нет данных", "no data") }; }
+    }));
+    if (seq !== state.seq) return;
+    routeRows = rows;
+    setSlot($("routeSlot"), routeCardHtml());
+  }
+  function routeCardHtml() {
+    if (!routeRows || routeRows.length < 2) return "";
+    const rows = routeRows.map(r => `<div class="x-row small"><span class="x-name">${esc(r.name)}</span><span class="x-temp">${esc(r.temp)}</span></div><div class="x-sub" style="margin:-4px 0 6px">${esc(r.text)}</div>`).join("");
+    return `<div class="xcard" data-block="route"><div class="chart-title">🧭 ${t("Погода по точкам маршрута", "Weather along the route")}</div>${rows}<div class="x-sub">${t("Точки — ваши избранные города (от 2 до 4)", "Points are your favorite cities (2 to 4)")}</div></div>`;
+  }
+
+  function extraCardsHtml(data) {
+    return [journalCard(data), timerCard(data), ventCard(data), skyCard(data), clothesCard(data), storyCard(data),
+      wateringCard(data), frostCard(data), heatingCard(data), mountainCard(data), eventsCard(),
+      `<div id="routeSlot">${routeCardHtml()}</div>`].join("\n");
   }
 
   // Ряд для «по часам»: «сейчас» + каждые N часов из почасовых данных.
@@ -1319,6 +1720,19 @@
       ${now != null ? `<div class="d-sub">${t("сейчас ", "now ")}${Math.round(now * 10) / 10}</div>` : ""}`;
   }
 
+  // Световой день, время до заката, «золотой час» и фаза луны
+  function sunExtra(today, now, off) {
+    const out = [];
+    if (today.sunrise && today.sunset) {
+      out.push("☀️ " + t("Световой день: ", "Daylight: ") + durText(today.sunset - today.sunrise));
+      if (now >= today.sunrise && now < today.sunset) out.push("⏳ " + t("До заката: ", "Until sunset: ") + durText(today.sunset - now));
+      out.push("📸 " + t("Золотой час: ", "Golden hour: ") + fmtHM(today.sunrise, off) + "–" + fmtHM(today.sunrise + 3600, off) + " · " + fmtHM(today.sunset - 3600, off) + "–" + fmtHM(today.sunset, off));
+    }
+    const m = moonPhase(now);
+    out.push(m.icon + " " + m.name + ", " + t("освещённость ", "illumination ") + m.illum + "%");
+    return out.map(x => `<div>${esc(x)}</div>`).join("");
+  }
+
   function sunProgressPct(sr, ss) {
     if (!sr || !ss) return null;
     const now = Date.now() / 1000;
@@ -1332,6 +1746,8 @@
     const animate = opts.animate !== false;
     state.data = data;
     state.city = city;
+    notePressure(data);
+    detectEvents(data);
     if (city.tz !== data.tz) { city.tz = data.tz; store.set(LAST_KEY, city); }
 
     const cur = data.current, off = data.tz;
@@ -1354,7 +1770,7 @@
     if (data.yesterday && today.max != null) {
       const diff = (today.max + today.min) / 2 - (data.yesterday.max + data.yesterday.min) / 2;
       const shown = toTempDelta(diff);
-      hist = `<div class="hist-card">
+      hist = `<div class="hist-card" data-block="hist">
         <div style="font-size:13px;color:var(--muted);margin-bottom:4px">${t("Сравнение со вчера", "Vs yesterday")}</div>
         <div style="font-size:16px;font-weight:600">${shown > 0 ? "+" : ""}${shown}${tempSym()} ${shown > 0 ? t("теплее", "warmer") : shown < 0 ? t("холоднее", "colder") : t("как вчера", "same as yesterday")}</div></div>`;
     }
@@ -1366,6 +1782,8 @@
     const shownDays = Math.min(state.dayRange, data.daily.length);
 
     content.classList.toggle("static", !animate);
+    content.setAttribute("data-hide", (settings.hide || []).join(" "));
+    document.body.classList.toggle("eco", ecoOn());
     content.innerHTML = `
       ${favBar}
       <div class="current">
@@ -1385,24 +1803,29 @@
 
       ${hist}
 
-      <div class="wear-card anim-fade-up delay-2">
+      <div class="wear-card anim-fade-up delay-2" data-block="wear">
         <div class="wear-title">👔 ${t("Что надеть", "What to wear")}</div>
         <div class="wear-text">${wearText(cur.feels, kind, cur.windSpeed || 0)}</div>
       </div>
 
       ${walkCard(data)}
 
-      <div id="pollenSlot" class="anim-fade-up delay-2">${pollenCard(data)}</div>
+      <div id="actSlot">${activitiesCard(data)}</div>
 
-      <div class="aqi-card anim-fade-up delay-2" id="aqiSlot">${aqiInner(data)}</div>
+      <div id="meteoSlot">${meteoCard(data)}</div>
+      <div id="extraCards">${extraCardsHtml(data)}</div>
 
-      <div class="details-grid anim-fade-up delay-3">
+      <div id="pollenSlot" class="anim-fade-up delay-2" data-block="pollen">${pollenCard(data)}</div>
+
+      <div class="aqi-card anim-fade-up delay-2" id="aqiSlot" data-block="aqi">${aqiInner(data)}</div>
+
+      <div class="details-grid anim-fade-up delay-3" data-block="details">
         <div class="detail-card" id="uvCard">${uvCard(data)}</div>
         <div class="detail-card"><div class="d-icon">🌡️</div><div class="d-label">${t("Ощущается как", "Feels like")}</div>
           <div class="d-value">${toTemp(cur.feels)}${tempSym()}</div></div>
         <div class="detail-card"><div class="d-icon">💧</div><div class="d-label">${t("Влажность", "Humidity")}</div>
           <div class="d-value">${Math.round(cur.humidity)}%</div></div>
-        <div class="detail-card"><div class="d-icon">💨</div><div class="d-label">${t("Ветер", "Wind")} ${windDir(cur.windDeg)}</div>
+        <div class="detail-card"><div class="d-icon">${cur.windDeg != null ? `<span class="warrow" style="transform:rotate(${(cur.windDeg + 180) % 360}deg)">↑</span>` : "💨"}</div><div class="d-label">${t("Ветер", "Wind")} ${windDir(cur.windDeg)}</div>
           <div class="d-value">${toWind(cur.windSpeed || 0)} <span style="font-size:12px;font-weight:500">${windSym()}</span></div>
           ${gustNow > (cur.windSpeed || 0) + 1 ? `<div class="d-sub">${t("порывы до ", "gusts ")}${toWind(gustNow)}</div>` : ""}</div>
         <div class="detail-card"><div class="d-icon">📉</div><div class="d-label">${t("Давление", "Pressure")}</div>
@@ -1412,14 +1835,14 @@
           ${today.pop != null && today.pop >= 10 ? `<div class="d-sub">${t("вероятность ", "chance ")}${Math.round(today.pop)}%</div>` : ""}</div>
       </div>
 
-      <div id="kpSlot" class="anim-fade-up delay-3">${kpCard(data)}</div>
+      <div id="kpSlot" class="anim-fade-up delay-3" data-block="kp">${kpCard(data)}</div>
 
-      <div class="chart-card anim-fade-up delay-3">
+      <div class="chart-card anim-fade-up delay-3" data-block="chart">
         <div style="font-size:13px;color:var(--muted);margin-bottom:8px">📈 ${t("Температура 24 ч", "Temperature 24h")}</div>
         <div class="chart-wrap" id="chartWrap">${chartSvg(data)}</div>
       </div>
 
-      <div class="sun-card anim-fade-up delay-3">
+      <div class="sun-card anim-fade-up delay-3" data-block="sun">
         <div class="sun-row">
           <div class="sun-side"><div class="s-icon">🌅</div><div class="s-label">${t("Восход", "Sunrise")}</div></div>
           <div class="sun-side"><div class="s-icon">🌇</div><div class="s-label">${t("Закат", "Sunset")}</div></div>
@@ -1429,9 +1852,10 @@
           <div class="sun-side"><div class="s-time">${today.sunrise ? fmtHM(today.sunrise, off) : "—"}</div></div>
           <div class="sun-side"><div class="s-time">${today.sunset ? fmtHM(today.sunset, off) : "—"}</div></div>
         </div>
+        <div class="sun-extra">${sunExtra(today, nowSec, off)}</div>
       </div>
 
-      <div class="radar-card anim-fade-up delay-3">
+      <div class="radar-card anim-fade-up delay-3" data-block="radar">
         <div style="font-size:13px;color:var(--muted);margin-bottom:10px">📡 ${t("Карта осадков", "Precipitation radar")}</div>
         <button type="button" class="radar-btn" data-act="radar">${t("Открыть карту осадков", "Open precipitation radar")}</button>
         <a class="radar-alt" href="https://www.rainviewer.com/map.html?loc=${city.lat},${city.lon},8" target="_blank" rel="noopener">${t("или на сайте RainViewer", "or on rainviewer.com")}</a>
@@ -1440,7 +1864,7 @@
       <div class="section-title anim-fade-up delay-3">🕒 ${t("По часам", "Hourly")}</div>
       <div class="hourly-scroll" id="hourly">${hourCards(data)}</div>
 
-      <div id="precipSlot" class="anim-fade-up delay-3">${precipChart(data)}</div>
+      <div id="precipSlot" class="anim-fade-up delay-3" data-block="precip">${precipChart(data)}</div>
 
       <div class="section-title anim-fade-up delay-4" id="dailyTitle">📅 ${t("На", "For")} ${shownDays} ${t("дней", "days")}</div>
       <div class="interval-tabs anim-fade-up delay-4" id="dayTabs">
@@ -1454,6 +1878,7 @@
     // запоминаем, что показано, — повторная перерисовка карточек без изменений не проигрывает анимацию заново
     $("aqiSlot").__html = aqiInner(data); $("pollenSlot").__html = pollenCard(data); $("uvCard").__html = uvCard(data);
     $("alertsSlot").__html = alertsHtml(data); $("kpSlot").__html = kpCard(data);
+    $("actSlot").__html = activitiesCard(data); $("meteoSlot").__html = meteoCard(data);
 
     updateSky();
     applyEffects(data, city);
@@ -1491,7 +1916,7 @@
   // =====================================================================
   function normalizeCity(c) {
     if (!c || !isFinite(Number(c.lat)) || !isFinite(Number(c.lon))) return DEFAULT_CITY;
-    return { name: String(c.name || "—"), lat: Number(c.lat), lon: Number(c.lon), country: c.country || "", tz: typeof c.tz === "number" ? c.tz : undefined, tzName: c.tzName || undefined };
+    return { name: String(c.name || "—"), lat: Number(c.lat), lon: Number(c.lon), country: c.country || "", tz: typeof c.tz === "number" ? c.tz : undefined, tzName: c.tzName || undefined, geo: !!c.geo };
   }
 
   // Open-Meteo ответил позже запасного источника — заменяем данные на полные (16 дней, УФ, вчерашний день)
@@ -1523,6 +1948,7 @@
     state.city = city;
     state.openDay = null;
     store.set(LAST_KEY, city);
+    if (!city.geo) pushRecent(city);
 
     const cached = readCache(city.lat, city.lon);
     if (cached) { state.data = cached; render(cached, city, { animate: true, status: "updating" }); }
@@ -1564,6 +1990,7 @@
   }
 
   function afterData(data, seq) {
+    loadRoute(seq);
     loadExtras(data, seq);
   }
 
@@ -1644,12 +2071,13 @@
   // =====================================================================
   //  Эффекты: частицы, звук, уведомления
   // =====================================================================
-  const reduceMotion = window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches;
+  const reduceMotion = (window.matchMedia && matchMedia("(prefers-reduced-motion: reduce)").matches) || false;
+  const ecoOn = () => settings.eco === "on" || (settings.eco === "auto" && (navigator.hardwareConcurrency || 8) <= 4);
 
   function setParticles(kind) {
     const box = $("weatherParticles"); if (!box) return;
     box.innerHTML = "";
-    if (reduceMotion) return;
+    if (reduceMotion || ecoOn()) return;
     const type = kind === "rain" || kind === "storm" ? "rain" : kind === "snow" ? "snow" : null;
     if (!type) return;
     const count = type === "rain" ? (kind === "storm" ? 90 : 70) : 35;
@@ -1906,7 +2334,7 @@
     else if (kind === "fog") { fog = true; dim = 0.2; }
 
     // WebGL-облака вместо CSS-пятен, если получилось
-    const useTex = !!gp && CloudTex.show(gp[0], gp[1], state.phase, kind === "storm" || kind === "rain" ? 0.65 : 1);
+    const useTex = !!gp && !ecoOn() && CloudTex.show(gp[0], gp[1], state.phase, kind === "storm" || kind === "rain" ? 0.65 : 1);
     if (!useTex) CloudTex.hide();
     if (useTex) { n = 0; dim = 0; }
 
@@ -2069,10 +2497,28 @@
     }
   }
 
+  (function setupVoice() {
+    const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+    const b = $("voiceBtn"); if (!b) return;
+    if (!SR) { b.hidden = true; return; }
+    b.addEventListener("click", () => {
+      const r = new SR(); r.lang = settings.lang === "en" ? "en-US" : "ru-RU"; r.interimResults = false; r.maxAlternatives = 1;
+      b.classList.add("rec");
+      r.onresult = e => { const txt = (e.results[0] && e.results[0][0] && e.results[0][0].transcript || "").trim(); if (txt) { searchInput.value = txt; runSearch(txt); } };
+      r.onerror = () => toast(t("Не удалось распознать голос", "Could not recognize speech"));
+      r.onend = () => b.classList.remove("rec");
+      try { r.start(); } catch (e) { b.classList.remove("rec"); }
+    });
+  })();
+
+  searchInput.addEventListener("focus", () => {
+    if (searchInput.value.trim().length || !recent.length) return;
+    showSuggestions(recent, t("Недавние города", "Recent cities"));
+  });
   searchInput.addEventListener("input", () => {
     clearTimeout(searchTimer);
     const q = searchInput.value.trim();
-    if (q.length < 2) { searchSeq++; suggestionsEl.classList.remove("show"); return; }
+    if (q.length < 2) { searchSeq++; if (!q.length && recent.length) showSuggestions(recent, t("Недавние города", "Recent cities")); else suggestionsEl.classList.remove("show"); return; }
     searchTimer = setTimeout(() => runSearch(q), 300);
   });
   searchInput.addEventListener("keydown", async e => {
@@ -2099,29 +2545,82 @@
   // =====================================================================
   //  Геолокация
   // =====================================================================
-  locBtn.addEventListener("click", () => {
-    if (!navigator.geolocation) { toast(t("Геолокация не поддерживается", "Geolocation is not supported")); return; }
+  // ---------- Определение местоположения ----------
+  // Порядок: точный GPS → если сигнала нет или он долго не приходит, повтор с сетью/Wi-Fi → название по координатам
+  // (Nominatim), а если его нет — ближайший известный город из списка. Ошибки разделены по причинам.
+  let geoBusy = false;
+  let lastGeo = store.get("wx_last_geo_v1", null);
+  const geoErrText = code => code === 1
+    ? t("Доступ к местоположению запрещён. Разрешите его для этого сайта в настройках Chrome: ⋮ → Настройки → Настройки сайтов → Местоположение.", "Location access is blocked. Allow it for this site in Chrome settings: ⋮ → Settings → Site settings → Location.")
+    : code === 2
+      ? t("Телефон не может определить место: включите геолокацию и GPS в шторке и попробуйте на открытом месте.", "The phone cannot determine your position: turn on location and GPS in the notification shade and try in an open place.")
+      : t("Слишком долго нет ответа от GPS. Попробуйте ещё раз.", "The GPS takes too long to respond. Please try again.");
+
+  function getPos(opts) {
+    return new Promise((resolve, reject) => {
+      if (!navigator.geolocation) return reject({ code: 2, message: "unsupported" });
+      navigator.geolocation.getCurrentPosition(resolve, reject, opts);
+    });
+  }
+  async function detectPosition(onStep) {
+    try {
+      return await getPos({ enableHighAccuracy: true, timeout: 15000, maximumAge: 60 * 1000 });
+    } catch (e1) {
+      if (e1 && e1.code === 1) throw e1;                       // запрет — повтор бесполезен
+      onStep && onStep();
+      return await getPos({ enableHighAccuracy: false, timeout: 12000, maximumAge: 10 * 60 * 1000 });
+    }
+  }
+
+  // ближайший известный город (из встроенного списка, избранных и недавних): запасное название
+  function nearestKnown(lat, lon) {
+    const pool = LOCAL_CITIES.map(c => ({ name: c.name, lat: c.latitude, lon: c.longitude }))
+      .concat(favorites).concat(recent);
+    let best = null, bd = Infinity;
+    pool.forEach(c => { const d = distKm(lat, lon, Number(c.lat), Number(c.lon)); if (d < bd) { bd = d; best = c; } });
+    return best && bd <= 60 ? best.name : null;
+  }
+
+  async function reverseName(lat, lon) {
+    try {
+      const r = await getJson("https://nominatim.openstreetmap.org/reverse?lat=" + lat + "&lon=" + lon +
+        "&format=json&zoom=10&accept-language=" + settings.lang, 6000);
+      const a = (r && r.address) || {};
+      return { name: a.city || a.town || a.village || a.municipality || a.county || a.state || null, country: (a.country_code || "").toUpperCase() };
+    } catch (e) { return { name: null, country: "" }; }
+  }
+
+  async function locateMe() {
+    if (geoBusy) return;
+    geoBusy = true; locBtn.disabled = true; locBtn.classList.add("busy");
     toast(t("Определяю местоположение…", "Locating…"));
-    navigator.geolocation.getCurrentPosition(async pos => {
-      const lat = pos.coords.latitude, lon = pos.coords.longitude;
-      let name = t("Моё местоположение", "My location"), country = "";
-      try {
-        const r = await getJson("https://nominatim.openstreetmap.org/reverse?lat=" + lat + "&lon=" + lon +
-          "&format=json&zoom=10&accept-language=" + settings.lang, 6000);
-        const a = (r && r.address) || {};
-        name = a.city || a.town || a.village || a.municipality || a.county || a.state || name;
-        country = (a.country_code || "").toUpperCase();
-      } catch (e) { /* оставляем «Моё местоположение» */ }
-      loadCity({ name, lat, lon, country });
-    }, err => {
-      const msg = err && err.code === 1
-        ? t("Доступ к геолокации запрещён. Разрешите его в настройках браузера.", "Location access denied. Allow it in browser settings.")
-        : err && err.code === 3
-          ? t("Не удалось определить местоположение вовремя", "Location request timed out")
-          : t("Не удалось определить местоположение", "Could not determine location");
-      toast(msg);
-    }, { enableHighAccuracy: false, timeout: 12000, maximumAge: 5 * 60 * 1000 });
-  });
+    try {
+      if (navigator.permissions && navigator.permissions.query) {
+        try { const st = await navigator.permissions.query({ name: "geolocation" }); if (st.state === "denied") throw { code: 1 }; } catch (e) { if (e && e.code === 1) throw e; }
+      }
+      const pos = await detectPosition(() => toast(t("Сигнал слабый, уточняю по сети…", "Weak signal, refining with network…")));
+      const lat = pos.coords.latitude, lon = pos.coords.longitude, acc = Math.round(pos.coords.accuracy || 0);
+      let { name, country } = await reverseName(lat, lon);
+      if (!name) name = nearestKnown(lat, lon) || t("Моё местоположение", "My location");
+      lastGeo = { lat, lon, acc, at: Date.now() };
+      store.set("wx_last_geo_v1", lastGeo);
+      loadCity({ name, lat, lon, country, geo: true });
+      toast(t("Точность около " + (acc < 1000 ? acc + " м" : Math.round(acc / 1000) + " км"), "Accuracy about " + (acc < 1000 ? acc + " m" : Math.round(acc / 1000) + " km")));
+    } catch (e) {
+      toast(geoErrText(e && e.code), lastGeo ? { label: t("Последнее место", "Last place"), run: () => loadCity({ name: t("Моё местоположение", "My location"), lat: lastGeo.lat, lon: lastGeo.lon, geo: true }) } : undefined);
+    } finally {
+      geoBusy = false; locBtn.disabled = false; locBtn.classList.remove("busy");
+    }
+  }
+  locBtn.addEventListener("click", locateMe);
+  // состояние разрешения на геолокацию: показываем в отчёте и подсказываем сразу, если запрещено
+  (function watchGeoPermission() {
+    if (!navigator.permissions || !navigator.permissions.query) return;
+    navigator.permissions.query({ name: "geolocation" }).then(st => {
+      geoPerm = st.state === "granted" ? "разрешено" : st.state === "denied" ? "запрещено" : "спросить";
+      st.onchange = () => { geoPerm = st.state === "granted" ? "разрешено" : st.state === "denied" ? "запрещено" : "спросить"; };
+    }).catch(() => {});
+  })();
 
   // =====================================================================
   //  Клики по контенту (делегирование вместо onclick="…" в разметке)
@@ -2140,6 +2639,7 @@
     } else if (el.dataset.act === "fav") toggleFavorite();
     else if (el.dataset.act === "retry") loadCity(state.city || DEFAULT_CITY, true);
     else if (el.dataset.act === "refresh") manualRefresh();
+    else if (el.dataset.act === "mood") logMood(el.dataset.mood);
     else if (el.dataset.act === "radar") { if (state.city && state.data) Radar.open(state.city, state.data.tz); }
   });
 
@@ -2152,13 +2652,32 @@
     if (await refresh(true)) toast(t("Данные обновлены", "Data updated"));
   }
 
+  // Список избранных городов с температурой: быстрый переход одним нажатием
+  async function favListPanel() {
+    const el = $("favList"); if (!el) return;
+    el.hidden = false;
+    el.innerHTML = favorites.length ? favorites.map((f, i) => `<button type="button" class="fl-row" data-fl="${i}"><span class="fl-name">${esc(f.name)}</span><span class="fl-temp" data-flt="${i}">…</span></button>`).join("") : `<div class="fl-empty">${t("Пока нет избранных городов. Нажмите ☆ рядом с названием города.", "No favorite cities yet. Tap ☆ next to a city name.")}</div>`;
+    for (let i = 0; i < favorites.length; i++) {
+      const f = favorites[i], cached = readCache(f.lat, f.lon);
+      if (cached) { const e = el.querySelector('[data-flt="' + i + '"]'); if (e) e.innerHTML = iconOf(cached.current.code, cached.current.isDay) + " " + toTemp(cached.current.temp) + tempSym(); }
+      else {
+        try {
+          const d = await fetchWeather(f.lat, f.lon, false);
+          const e = el.querySelector('[data-flt="' + i + '"]'); if (e) e.innerHTML = iconOf(d.current.code, d.current.isDay) + " " + toTemp(d.current.temp) + tempSym();
+        } catch (e) { const x = el.querySelector('[data-flt="' + i + '"]'); if (x) x.textContent = "—"; }
+      }
+    }
+    el.querySelectorAll("[data-fl]").forEach(b => b.addEventListener("click", () => { const f = favorites[Number(b.dataset.fl)]; closeSettings(); if (f) loadCity(f); }));
+  }
+  $("favListBtn").addEventListener("click", favListPanel);
+
   function toggleFavorite() {
     const c = state.city; if (!c) return;
     const idx = favorites.findIndex(f => Math.abs(f.lat - c.lat) < 0.01 && Math.abs(f.lon - c.lon) < 0.01);
     if (idx >= 0) favorites.splice(idx, 1);
     else {
       if (favorites.length >= 8) { toast(t("Можно сохранить до 8 городов", "You can save up to 8 cities")); return; }
-      favorites.push({ name: c.name, lat: c.lat, lon: c.lon });
+      favorites.push({ name: c.name, lat: c.lat, lon: c.lon, tzName: c.tzName });
     }
     saveFavs();
     if (state.data) render(state.data, c, { animate: false });
@@ -2186,8 +2705,30 @@
     if (settingsOpen) { settingsOpen = false; historyPushed = false; settingsPanel.classList.remove("open"); }
   });
 
+  const BLOCK_NAMES = {
+    hist: ["Сравнение со вчера", "vs yesterday"], wear: ["Что надеть", "What to wear"], walk: ["Лучшее время для прогулки", "Best time for a walk"],
+    activities: ["Что подходит сегодня", "What suits today"], journal: ["Дневник самочувствия", "Mood journal"], clothes: ["Что взять на неделю", "What to pack"],
+    timer: ["Таймер температуры", "Temperature timer"], ventilate: ["Проветривание и окна", "Airing and windows"], stars: ["Звёздное небо", "Stars"],
+    events: ["Сезонные события", "Seasonal events"], watering: ["Полив огорода", "Garden watering"], frost: ["Рассада и заморозки", "Seedlings and frost"],
+    heating: ["Отопление", "Heating"], story: ["История дня", "Story of the day"], mountain: ["Погода на высоте", "Weather at altitude"], route: ["Точки маршрута", "Route points"], meteo: ["Метеозависимость", "Weather sensitivity"], pollen: ["Пыльца", "Pollen"],
+    aqi: ["Качество воздуха", "Air quality"], details: ["Подробности: УФ, ветер, давление", "Details: UV, wind, pressure"], kp: ["Магнитное поле", "Geomagnetic field"],
+    chart: ["График температуры", "Temperature chart"], sun: ["Солнце и луна", "Sun and moon"], radar: ["Карта осадков", "Precipitation map"], precip: ["Осадки по часам", "Hourly precipitation"]
+  };
+  function buildBlocksGrid() {
+    const g = $("blocksGrid"); if (!g) return;
+    g.innerHTML = Object.keys(BLOCK_NAMES).map(k => `<label><input type="checkbox" data-blk="${k}" ${(settings.hide || []).indexOf(k) < 0 ? "checked" : ""}> ${esc(t(BLOCK_NAMES[k][0], BLOCK_NAMES[k][1]))}</label>`).join("");
+    g.querySelectorAll("input[data-blk]").forEach(cb => cb.addEventListener("change", () => {
+      const k = cb.dataset.blk;
+      settings.hide = (settings.hide || []).filter(x => x !== k);
+      if (!cb.checked) settings.hide.push(k);
+      saveSettings();
+      if (state.data && state.city) render(state.data, state.city, { animate: false });
+    }));
+  }
   function syncSettingsUI() {
     document.querySelectorAll(".settings-opt[data-k]").forEach(b => b.classList.toggle("active", settings[b.dataset.k] === b.dataset.v));
+    const ai = $("altInput"); if (ai && document.activeElement !== ai) ai.value = settings.altitude || "";
+    buildBlocksGrid();
   }
 
   function applyLang() {
@@ -2201,6 +2742,11 @@
   }
 
   $("settingsBtn").addEventListener("click", openSettings);
+  $("altInput").addEventListener("change", e => {
+    settings.altitude = Math.max(0, Math.min(8000, Math.round(Number(e.target.value) || 0)));
+    saveSettings();
+    if (state.data && state.city) render(state.data, state.city, { animate: false });
+  });
   $("settingsClose").addEventListener("click", closeSettings);
   settingsPanel.addEventListener("click", e => { if (e.target === settingsPanel) closeSettings(); });
   document.querySelectorAll(".settings-opt[data-k]").forEach(btn => {
@@ -2243,6 +2789,74 @@
     out.textContent = lines.join("\n") + "\n" + t("Браузер сообщает: ", "Browser reports: ") + (navigator.onLine === false ? t("нет сети", "offline") : t("сеть есть", "online"));
   }
   $("diagBtn").addEventListener("click", runDiagnostics);
+
+  let geoPerm = "";
+  function buildReport() {
+    const d = state.data, c = state.city, ua = navigator.userAgent.replace(/\(.*?\)/, "(…)");
+    const lines = [
+      "Погода " + APP_VERSION + " (" + new Date().toISOString().slice(0, 16).replace("T", " ") + " UTC)",
+      "Город: " + (c ? c.name + " " + c.lat.toFixed(2) + "," + c.lon.toFixed(2) : "—"),
+      "Источник: " + (d ? SRC_NAME[d.src] || d.src : "—") + (d && d.note ? " | " + d.note : ""),
+      "Данные: " + (d ? new Date(d.fetchedAt).toISOString().slice(0, 16).replace("T", " ") + " UTC, дней " + d.daily.length : "нет"),
+      "Воздух: " + (d && d.air ? "уровень " + d.air.level : "нет") + " | УФ: " + (d && (d.uvx || d.daily[0].uv != null) ? "есть" : "нет") + " | Kp: " + (d && d.kp ? d.kp.kp : "нет"),
+      "Сеть в браузере: " + (navigator.onLine === false ? "нет" : "есть") + " | Экономия: " + (ecoOn() ? "да" : "нет") + " | Тема: " + settings.theme,
+      "Браузер: " + ua,
+      "Геолокация: " + (lastGeo ? "последняя точность " + lastGeo.acc + " м" : "не определялась") + " | Разрешение: " + (geoPerm || "неизвестно"),
+      "Экран: " + window.innerWidth + "×" + window.innerHeight + " | DPR " + (window.devicePixelRatio || 1) + " | Ядер: " + (navigator.hardwareConcurrency || "?")
+    ];
+    return lines.join("\n");
+  }
+  async function copyReport() {
+    const text = buildReport();
+    let ok = false;
+    try { await navigator.clipboard.writeText(text); ok = true; } catch (e) {
+      try { const ta = document.createElement("textarea"); ta.value = text; ta.style.position = "fixed"; ta.style.opacity = "0"; document.body.appendChild(ta); ta.select(); ok = document.execCommand("copy"); ta.remove(); } catch (e2) {}
+    }
+    toast(ok ? t("Отчёт скопирован — вставьте его в сообщение", "Report copied — paste it into a message") : t("Не удалось скопировать, выделите текст ниже", "Copy failed, select the text below"));
+    const out = $("diagOut"); out.hidden = false; out.textContent = text;
+  }
+  $("reportBtn").addEventListener("click", copyReport);
+
+  // ---------- Поделиться погодой (текст) ----------
+  async function shareWeather() {
+    const d = state.data, c = state.city; if (!d || !c) return;
+    const cur = d.current, today = d.daily[0] || {}, sm = rainSummary(d);
+    const text = [
+      c.name + ": " + toTemp(cur.temp) + tempSym() + ", " + describe(cur.code),
+      t("Ощущается как ", "Feels like ") + toTemp(cur.feels) + tempSym() + t(", ветер ", ", wind ") + toWind(cur.windSpeed || 0) + " " + windSym(),
+      t("Сегодня ", "Today ") + toTemp(today.min) + "…" + toTemp(today.max) + tempSym() + (sm ? " · " + sm.text : "")
+    ].join("\n");
+    try {
+      if (navigator.share) await navigator.share({ title: t("Погода", "Weather"), text });
+      else { await navigator.clipboard.writeText(text); toast(t("Текст скопирован", "Text copied")); }
+    } catch (e) { /* пользователь отменил */ }
+  }
+  $("shareBtn").addEventListener("click", shareWeather);
+
+  // ---------- Первый запуск и «Что нового» ----------
+  const WHATS_NEW = {
+    "0.0.15": { ru: ["Дневник самочувствия с подсказкой о связи с давлением", "Чек-лист «Что взять на неделю», учитывает ребёнка", "Таймер температуры: когда похолодает или потеплеет", "Проветривание, мойка окон, звёздное небо и лучший час для наблюдения", "Сезонные события, полив и заморозки для рассады, подсказка по отоплению", "История дня, погода на высоте и погода по точкам маршрута"],
+              en: ["Mood journal with a hint about pressure", "Weekly packing checklist, child-aware", "Temperature timer: when it cools or warms", "Airing, window washing, stars and the best hour to watch", "Seasonal events, garden watering, seedling frost and heating hints", "Story of the day, weather at altitude and weather along the route"] },
+    "0.0.14": { ru: ["Определение местоположения: повтор по сети, если GPS молчит", "Понятные подсказки: что делать при запрете доступа или отсутствии сигнала", "Если название места не найдено, берётся ближайший известный город", "Кнопка «Последнее место», если GPS сейчас не работает", "В отчёте: точность и разрешение на геолокацию"],
+              en: ["Location: network retry when GPS is silent", "Clear hints: what to do when access is blocked or there is no signal", "If the place name is unknown, the nearest known city is used", "“Last place” button when GPS is unavailable", "Report now includes location accuracy and permission"] },
+    "0.0.13": { ru: ["Метеозависимость: давление за сутки, магнитное поле и перепад температуры", "«Что подходит сегодня»: бег, шашлык, сушка белья, мойка, полив, рыбалка", "Гололёд, стрелка ветра, световой день, золотой час и фаза луны", "Режим экономии, скрытие блоков, формат времени 12/24, недавние города", "Кнопки «Поделиться», «Скопировать отчёт», экран первого запуска"],
+              en: ["Weather sensitivity: pressure over 24 hours, geomagnetic field, temperature change", "“What suits today”: running, barbecue, laundry, car wash, watering, fishing", "Ice warning, wind arrow, daylight length, golden hour and moon phase", "Economy mode, hidden blocks, 12/24 clock, recent cities", "Share and copy-report buttons, first-run screen"] }
+  };
+  function showWhatsNew() {
+    const list = (WHATS_NEW[APP_VERSION] || {})[settings.lang === "en" ? "en" : "ru"];
+    const el = $("whatsNew"); if (!el || !list) return;
+    el.innerHTML = `<h3>${t("Что нового в ", "What's new in ")}${APP_VERSION}</h3><ul>${list.map(x => `<li>${esc(x)}</li>`).join("")}</ul><button type="button" class="retry-btn" id="whatsNewOk">${t("Понятно", "Got it")}</button>`;
+    el.hidden = false;
+    $("whatsNewOk").addEventListener("click", () => { el.hidden = true; store.set("wx_seen_" + APP_VERSION, true); });
+  }
+  function maybeWhatsNew() { if (!store.get("wx_seen_" + APP_VERSION, false) && store.get("wx_started_v1", false)) showWhatsNew(); }
+
+  function showFirstRun() {
+    const el = $("firstRun"); if (!el) return;
+    el.hidden = false;
+    $("frPlace").addEventListener("click", () => { el.hidden = true; store.set("wx_started_v1", true); locateMe(); });
+    $("frCity").addEventListener("click", () => { el.hidden = true; store.set("wx_started_v1", true); searchInput.focus(); });
+  }
 
   // Сброс «застрявшей» версии: удаляем Service Worker и кэши приложения, затем перезагружаем
   $("resetBtn").addEventListener("click", async () => {
@@ -2640,6 +3254,15 @@
   applyLang();
   syncSettingsUI();
   updateSky();
+  (function handleShortcut() {
+    const sp = new URLSearchParams(location.search), a = sp.get("a");
+    if (a === "radar") { setTimeout(() => { if (state.city && state.data) Radar.open(state.city, state.data.tz); }, 1500); }
+    if (a === "favorites") setTimeout(() => { $("favListBtn") && $("favListBtn").click(); }, 1200);
+  })();
   loadCity(store.get(LAST_KEY, DEFAULT_CITY));
+  // Первый запуск определяем по флагу, а не по LAST_KEY: loadCity сохраняет город сразу, поэтому LAST_KEY к этому моменту уже есть.
+  const firstEver = !store.get("wx_seen_boot_v1", false);
+  store.set("wx_seen_boot_v1", true);
+  setTimeout(() => { if (firstEver && !store.get("wx_started_v1", false)) showFirstRun(); else maybeWhatsNew(); }, 400);
 
 })();
